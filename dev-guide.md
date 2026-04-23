@@ -39,6 +39,20 @@ git pull origin dev
 git checkout -b feature/기능명
 ```
 
+git 명령어 정리
+```bash
+git checkout -b 브랜치명  :브랜치 생성 후 이동
+git checkout 브랜치명     : 해당 브랜치로 이동
+```
+
+개발과 테스트 후 pr올리는 과정
+```bash
+git add .                  : 스테이징
+git commit -m '커밋 메시지'   : 커밋메시지 남기기
+git push origin 브랜치명      : 원격저장소로 작업상황 푸쉬
+깃 레포로 이동후 pr 생성         : 헷갈리실경우 구글링 부탁드립니다.
+```
+
 ## 2) 개발 워크플로우
 
 1. 기능 브랜치 생성
