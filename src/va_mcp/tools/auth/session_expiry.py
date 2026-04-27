@@ -2,15 +2,25 @@ import time
 import requests
 from datetime import datetime
 
-from va_mcp.core.base import BaseTool
-from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
-from va_mcp.core.utils import (
-    utc_now_iso,
-    sanitize_response_sample,
-    mask_sensitive,
-    build_tool_error,
+from va_mcp.core import (
+    BaseTool,
+    ToolInput,
+    ToolResult,
+    Evidence,
+    ToolError,
+    AuthContext,
+    ToolStatus,
+    Severity,
+    Confidence,
+    ErrorCode,
 )
-from va_mcp.core.constants import ToolStatus, Severity, Confidence, ErrorCode
+from va_mcp.core.utils import (
+    build_tool_error,
+    utc_now_iso,
+    mask_sensitive,
+    sanitize_response_sample,
+    sanitize_request_body,
+)
 
 
 class SessionExpiryTool(BaseTool):
@@ -30,10 +40,13 @@ class SessionExpiryTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="입력 부족",
                 description="request 또는 auth 정보가 없습니다.",
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
                 started_at=started_at,
                 ended_at=started_at,
                 duration_ms=0,
-                evidence=[],
             )
 
         try:
@@ -47,10 +60,9 @@ class SessionExpiryTool(BaseTool):
             headers = tool_input.request.headers.copy()
             headers["Authorization"] = f"Bearer {token}"
             url = tool_input.target.base_url + tool_input.request.path
-
             timeout_s = tool_input.options.timeout / 1000
 
-            # 4) 첫 요청
+            # 4) 첫 요청 (유효한 토큰 검증)
             res1 = requests.request(
                 method=tool_input.request.method,
                 url=url,
@@ -58,11 +70,30 @@ class SessionExpiryTool(BaseTool):
                 timeout=timeout_s,
             )
 
-            # 5) 대기 시간 (초)
+            # 5) 첫 요청이 200이 아니면 테스트 불가능 → SKIPPED
+            if res1.status_code != 200:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="테스트 SKIPPED",
+                    description="첫 번째 요청이 성공(200)하지 않아 세션 만료 테스트를 건너뛰었습니다.",
+                    evidence=[],
+                    owasp=[],
+                    cwe=[],
+                    recommendation="",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=0,
+                )
+
+            # 6) 대기 후 두 번째 요청
             wait_sec = tool_input.options.extra.get("wait", 2)
             time.sleep(wait_sec)
 
-            # 6) 두 번째 요청
             res2 = requests.request(
                 method=tool_input.request.method,
                 url=url,
@@ -71,18 +102,18 @@ class SessionExpiryTool(BaseTool):
             )
 
             # 7) 취약 여부 판단
-            vulnerable = (res1.status_code == 200 and res2.status_code == 200)
-
-            if vulnerable:
+            if res2.status_code == 200:
                 status = ToolStatus.VULNERABLE.value
                 severity = Severity.MEDIUM.value
                 title = "세션 만료 미적용"
                 description = "시간 경과 후에도 동일 토큰으로 접근 가능합니다."
+                confidence = Confidence.HIGH.value
             else:
                 status = ToolStatus.PASSED.value
-                severity = Severity.INFO.value    # PASSED → INFO
+                severity = Severity.INFO.value
                 title = "세션 정상 만료"
                 description = "토큰이 만료되어 접근이 차단됨을 확인했습니다."
+                confidence = Confidence.LOW.value
 
             ended_at = utc_now_iso()
 
@@ -116,11 +147,11 @@ class SessionExpiryTool(BaseTool):
                 tool_name=self.tool_name,
                 status=status,
                 severity=severity,
-                confidence=Confidence.HIGH.value,
+                confidence=confidence,
                 title=title,
                 description=description,
                 evidence=evidence,
-                owasp=["A07 Broken Authentication"],
+                owasp=["A07:2025 Identification and Authentication Failures"],
                 cwe=["CWE-613"],
                 recommendation="세션 및 토큰 만료 시간을 올바르게 설정하세요.",
                 started_at=started_at,
@@ -139,11 +170,14 @@ class SessionExpiryTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="세션 테스트 타임아웃",
                 description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
+                owasp=[],
+                cwe=[],
+                recommendation="",
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
-                evidence=[],
-                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
             )
 
         # 12) 기타 HTTP 오류 처리
@@ -157,11 +191,14 @@ class SessionExpiryTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="HTTP 요청 실패",
                 description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
+                owasp=[],
+                cwe=[],
+                recommendation="",
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
-                evidence=[],
-                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
             )
 
         # 13) 내부 오류 처리
@@ -175,9 +212,12 @@ class SessionExpiryTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="세션 테스트 오류",
                 description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
+                owasp=[],
+                cwe=[],
+                recommendation="",
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
-                evidence=[],
-                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
             )

@@ -1,17 +1,25 @@
 import requests
 from datetime import datetime
 
-from va_mcp.core.base import BaseTool
-from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
-from va_mcp.core.utils import (
-    utc_now_iso,
-    sanitize_request_body,
-    sanitize_response_sample,
-    mask_sensitive,
-    build_tool_error,
+from va_mcp.core import (
+    BaseTool,
+    ToolInput,
+    ToolResult,
+    Evidence,
+    ToolError,
+    AuthContext,
+    ToolStatus,
+    Severity,
+    Confidence,
+    ErrorCode,
 )
-from va_mcp.core.constants import ToolStatus, Severity, Confidence, ErrorCode
-
+from va_mcp.core.utils import (
+    build_tool_error,
+    utc_now_iso,
+    mask_sensitive,
+    sanitize_response_sample,
+    sanitize_request_body,
+)
 
 class AccountLockoutTool(BaseTool):
     tool_id = "auth_lockout"
@@ -30,16 +38,17 @@ class AccountLockoutTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="입력 부족",
                 description="request 또는 auth 정보가 없습니다.",
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
                 started_at=started_at,
                 ended_at=started_at,
                 duration_ms=0,
-                evidence=[],
             )
 
         try:
             url = tool_input.target.base_url + tool_input.request.path
-
-            # body가 None인 경우 빈 dict로 방어
             orig_body = tool_input.request.body or {}
 
             locked = False
@@ -73,18 +82,25 @@ class AccountLockoutTool(BaseTool):
             # 3) 결과 결정
             if locked:
                 status = ToolStatus.PASSED.value
-                severity = Severity.INFO.value   # PASSED → INFO
+                severity = Severity.INFO.value
+                confidence = Confidence.LOW.value
                 title = "계정 잠금 정상"
                 description = "반복 로그인 실패 시 계정 잠금이 정상 동작합니다."
             else:
                 status = ToolStatus.VULNERABLE.value
                 severity = Severity.HIGH.value
+                confidence = Confidence.HIGH.value
                 title = "계정 잠금 없음"
                 description = "반복 로그인 실패에도 계정 잠금이 동작하지 않습니다."
 
+            # 4) OWASP / CWE / Recommendation
+            owasp = ["A07:2025 Identification and Authentication Failures"]
+            cwe = ["CWE-307"]
+            recommendation = "반복 로그인 실패 시 계정을 잠금 처리하도록 서버 측 정책을 구현하세요."
+
             ended_at = utc_now_iso()
 
-            # 4) 증거 생성
+            # 5) 증거 생성
             evidence: list[Evidence] = []
             if last_res:
                 evidence.append(
@@ -102,7 +118,7 @@ class AccountLockoutTool(BaseTool):
                     )
                 )
 
-            # 5) 소요 시간(ms) 계산
+            # 6) 소요 시간(ms) 계산
             duration_ms = int(
                 (
                     datetime.fromisoformat(ended_at.replace("Z", ""))
@@ -111,19 +127,19 @@ class AccountLockoutTool(BaseTool):
                 * 1000
             )
 
-            # 6) ToolResult 반환 (OWASP/CWE/권고 포함)
+            # 7) ToolResult 반환
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
                 status=status,
                 severity=severity,
-                confidence=Confidence.HIGH.value,
+                confidence=confidence,
                 title=title,
                 description=description,
                 evidence=evidence,
-                owasp=["A07 Broken Authentication"],
-                cwe=["CWE-307"],
-                recommendation="반복 로그인 실패 시 계정을 잠금 처리하도록 서버 측 정책을 구현하세요.",
+                owasp=owasp,
+                cwe=cwe,
+                recommendation=recommendation,
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=duration_ms,
@@ -139,11 +155,14 @@ class AccountLockoutTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="요청 타임아웃",
                 description=str(e),
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
-                evidence=[],
-                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
             )
 
         except requests.RequestException as e:
@@ -156,11 +175,14 @@ class AccountLockoutTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="HTTP 요청 실패",
                 description=str(e),
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
-                evidence=[],
-                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
             )
 
         except Exception as e:
@@ -173,9 +195,12 @@ class AccountLockoutTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="내부 오류",
                 description=str(e),
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
+                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
-                evidence=[],
-                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e))],
             )

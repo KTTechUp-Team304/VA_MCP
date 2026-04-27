@@ -2,17 +2,25 @@ import time
 import requests
 from datetime import datetime
 
-from va_mcp.core.base import BaseTool
-from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
+from va_mcp.core import (
+    BaseTool,
+    ToolInput,
+    ToolResult,
+    Evidence,
+    ToolError,
+    AuthContext,
+    ToolStatus,
+    Severity,
+    Confidence,
+    ErrorCode,
+)
 from va_mcp.core.utils import (
+    build_tool_error,
     utc_now_iso,
+    mask_sensitive,
     sanitize_response_sample,
     sanitize_request_body,
-    mask_sensitive,
-    build_tool_error,
 )
-from va_mcp.core.constants import ToolStatus, Severity, Confidence, ErrorCode
-
 
 class RateLimitTool(BaseTool):
     tool_id = "auth_rate_limit"
@@ -31,10 +39,13 @@ class RateLimitTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="입력 부족",
                 description="request 또는 auth 정보가 없습니다.",
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
                 started_at=started_at,
                 ended_at=started_at,
                 duration_ms=0,
-                evidence=[],
             )
 
         try:
@@ -75,7 +86,7 @@ class RateLimitTool(BaseTool):
             except ZeroDivisionError:
                 avg = 0.0
 
-            # 4) 쓰로틀링 감지 (3번째 조건 제거)
+            # 4) 쓰로틀링 감지
             is_limited = (
                 429 in status_codes
                 or (len(status_codes) > 0 and status_codes.count(403) > len(status_codes) * 0.3)
@@ -84,7 +95,7 @@ class RateLimitTool(BaseTool):
             # 5) 상태·심각도 결정
             if is_limited:
                 status = ToolStatus.PASSED.value
-                severity = Severity.INFO.value       # PASSED → INFO 로 변경
+                severity = Severity.INFO.value
                 title = "Rate Limit 정상"
                 description = "요청 제한 동작이 확인되었습니다."
             else:
@@ -92,6 +103,15 @@ class RateLimitTool(BaseTool):
                 severity = Severity.MEDIUM.value
                 title = "Rate Limit 없음"
                 description = "무차별 요청이 가능합니다."
+
+            # ─── 2번 수정사항 반영 ───
+            owasp = ["A07:2025 Identification and Authentication Failures"]
+            cwe = ["CWE-770"]
+            recommendation = (
+                "서버 측에 적절한 rate limiting 정책을 도입하고, "
+                "과도 요청 시 429 상태코드를 반환하도록 설정하세요."
+            )
+            # ────────────────────────
 
             ended_at = utc_now_iso()
 
@@ -113,7 +133,7 @@ class RateLimitTool(BaseTool):
                     )
                 )
 
-            # 7) 소요 시간(ms) 계산
+            # 7) 소요 시간 계산
             duration_ms = int(
                 (
                     datetime.fromisoformat(ended_at.replace("Z", ""))
@@ -131,6 +151,9 @@ class RateLimitTool(BaseTool):
                 title=title,
                 description=description,
                 evidence=evidence,
+                owasp=owasp,
+                cwe=cwe,
+                recommendation=recommendation,
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=duration_ms,
@@ -146,11 +169,11 @@ class RateLimitTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="요청 타임아웃",
                 description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
-                evidence=[],
-                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
             )
 
         except requests.RequestException as e:
@@ -163,11 +186,11 @@ class RateLimitTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="HTTP 요청 실패",
                 description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
-                evidence=[],
-                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
             )
 
         except Exception as e:
@@ -180,9 +203,9 @@ class RateLimitTool(BaseTool):
                 confidence=Confidence.LOW.value,
                 title="내부 오류",
                 description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
-                evidence=[],
-                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
             )
