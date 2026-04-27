@@ -1,0 +1,219 @@
+import requests
+from datetime import datetime
+
+from va_mcp.core import (
+    BaseTool,
+    ToolInput,
+    ToolResult,
+    Evidence,
+    ToolStatus,
+    Severity,
+    Confidence,
+    ErrorCode,
+)
+from va_mcp.core.utils import (
+    build_tool_error,
+    utc_now_iso,
+    mask_sensitive,
+    sanitize_response_sample,
+)
+
+class JwtValidationTool(BaseTool):
+    tool_id = "auth_jwt"
+    tool_name = "JWT Validation Testing"
+
+    def run(self, tool_input: ToolInput) -> ToolResult:
+        started_at = utc_now_iso()
+
+        # 1) 입력 검증
+        if not tool_input.request or not tool_input.auth:
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="입력 부족",
+                description="request 또는 auth 정보가 없습니다.",
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
+                started_at=started_at,
+                ended_at=started_at,
+                duration_ms=0,
+            )
+
+        try:
+            # 2) JWT 토큰 획득 및 변조
+            token = tool_input.auth[0].token or ""
+            if not token:
+                raise ValueError("JWT 토큰이 비어 있습니다")
+
+            tampered = token[:-1] + "X"
+            url = tool_input.target.base_url + tool_input.request.path
+            timeout_s = tool_input.options.timeout / 1000
+
+            headers_valid = {"Authorization": f"Bearer {token}"}
+            headers_tampered = {"Authorization": f"Bearer {tampered}"}
+
+            # 3) 정상 토큰 / 변조 토큰 요청
+            res_valid = requests.request(
+                method=tool_input.request.method,
+                url=url,
+                headers=headers_valid,
+                timeout=timeout_s,
+            )
+            res_tampered = requests.request(
+                method=tool_input.request.method,
+                url=url,
+                headers=headers_tampered,
+                timeout=timeout_s,
+            )
+
+            # 4) 정상 토큰이 유효하지 않으면 테스트 불가 → SKIPPED
+            if res_valid.status_code != 200:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="테스트 SKIPPED",
+                    description="정상 토큰이 유효하지 않아 JWT 변조 테스트를 건너뛰었습니다.",
+                    evidence=[],
+                    owasp=[],
+                    cwe=[],
+                    recommendation="",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=0,
+                )
+
+            # 5) 취약 여부 판단
+            vulnerable = res_tampered.status_code == 200
+
+            # 6) 필드 셋팅
+            owasp = ["A02:2025 Cryptographic Failures"]
+            cwe = ["CWE-347"]
+            if vulnerable:
+                status = ToolStatus.VULNERABLE.value
+                severity = Severity.HIGH.value
+                confidence = Confidence.HIGH.value
+                title = "JWT 검증 실패"
+                description = "변조된 토큰이 허용됩니다."
+                recommendation = "서버에서 JWT 서명 및 유효성 검증을 반드시 수행하세요."
+            else:
+                status = ToolStatus.PASSED.value
+                severity = Severity.INFO.value
+                confidence = Confidence.LOW.value
+                title = "JWT 검증 정상"
+                description = "변조된 토큰이 차단됩니다."
+                recommendation = "변조 토큰이 차단되는지 확인되었습니다."
+
+            ended_at = utc_now_iso()
+
+            # 7) 증거 생성 (변조 토큰 결과)
+            evidence = [
+                Evidence(
+                    request={
+                        "method": tool_input.request.method,
+                        "path": tool_input.request.path,
+                        "headers": mask_sensitive(headers_tampered),
+                    },
+                    response_status=res_tampered.status_code,
+                    response_headers=mask_sensitive(dict(res_tampered.headers)),
+                    response_body_sample=sanitize_response_sample(res_tampered.text),
+                    note="변조 토큰 테스트",
+                )
+            ]
+
+            # 8) duration 계산
+            duration_ms = int(
+                (
+                    datetime.fromisoformat(ended_at.replace("Z", ""))
+                    - datetime.fromisoformat(started_at.replace("Z", ""))
+                ).total_seconds()
+                * 1000
+            )
+
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=status,
+                severity=severity,
+                confidence=confidence,
+                title=title,
+                description=description,
+                evidence=evidence,
+                owasp=owasp,
+                cwe=cwe,
+                recommendation=recommendation,
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+            )
+
+        # 8) Timeout 예외 처리
+        except requests.Timeout as e:
+            ended_at = utc_now_iso()
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="JWT 테스트 타임아웃",
+                description=str(e),
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=0,
+            )
+
+        # 9) 기타 HTTP 오류 처리
+        except requests.RequestException as e:
+            ended_at = utc_now_iso()
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="HTTP 요청 실패",
+                description=str(e),
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=0,
+            )
+
+        # 10) 내부 오류 처리
+        except Exception as e:
+            ended_at = utc_now_iso()
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="JWT 테스트 오류",
+                description=str(e),
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="",
+                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=0,
+            )
