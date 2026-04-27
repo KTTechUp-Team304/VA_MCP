@@ -255,6 +255,47 @@ extra["target_params"] = [
 
 ---
 
+## 7. CORS 미설정 테스트
+
+임의의 Origin 헤더를 포함한 요청을 보내고, 서버가 교차 출처 요청을 허용하는지 확인한다.
+
+### 입력
+
+* 기본 경로: `request.path` (없으면 `/` 사용)
+* 인증: `auth[0]` (없으면 비인증 요청)
+
+### 기본 테스트 Origin 목록
+
+```txt
+https://evil.example.com
+https://attacker.com
+null
+```
+
+### 추가 옵션
+
+```python
+extra["test_origins"] = ["https://custom-attacker.com"]
+```
+
+### 판단 기준
+
+| 조건 | status | severity |
+|------|--------|----------|
+| ACAO: 공격자 Origin 반사 또는 `*` + ACAC: true | `VULNERABLE` | `CRITICAL` |
+| ACAO: 공격자 Origin 반사 또는 `*` (크레덴셜 없음) | `VULNERABLE` | `HIGH` |
+| ACAO: `null` 허용 | `VULNERABLE` | `MEDIUM` |
+| 허용하지 않음 | `PASSED` | `INFO` |
+
+* 여러 Origin 테스트 중 가장 높은 severity가 최종 결과에 반영된다.
+* `Access-Control-Allow-Credentials: true` + ACAO 허용은 실제 세션 탈취로 이어질 수 있어 CRITICAL로 분류한다.
+
+### SKIPPED 조건
+
+* 없음 (target만 있으면 실행 가능)
+
+---
+
 # 공통 반환 구조
 
 ```python
