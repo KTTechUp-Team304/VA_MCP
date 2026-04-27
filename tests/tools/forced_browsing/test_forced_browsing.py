@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, call, patch
 import requests
 
 from va_mcp.core import AuthContext, TargetInfo, ToolInput, ToolOptions
-from va_mcp.tools.forced_browsing import ForcedBrowsingTool
+from va_mcp.tools.access_control.forced_browsing import ForcedBrowsingTool
 
 
 # ------------------------------------------------------------------

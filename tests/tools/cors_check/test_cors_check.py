@@ -20,7 +20,7 @@ import requests
 
 from va_mcp.core import TargetInfo, ToolInput, ToolOptions
 from va_mcp.core.schemas import ApiRequest
-from va_mcp.tools.cors_check import CorsCheckTool
+from va_mcp.tools.access_control.cors_check import CorsCheckTool
 
 
 # ------------------------------------------------------------------

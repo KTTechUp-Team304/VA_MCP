@@ -18,7 +18,7 @@ import requests
 
 from va_mcp.core import AuthContext, TargetInfo, ToolInput, ToolOptions
 from va_mcp.core.schemas import ApiRequest
-from va_mcp.tools.idor_bola import IdorBolaTool
+from va_mcp.tools.access_control.idor_bola import IdorBolaTool
 
 
 # ------------------------------------------------------------------

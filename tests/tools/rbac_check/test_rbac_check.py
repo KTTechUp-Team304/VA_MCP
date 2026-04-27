@@ -19,7 +19,7 @@ import requests
 
 from va_mcp.core import AuthContext, TargetInfo, ToolInput, ToolOptions
 from va_mcp.core.schemas import ApiRequest
-from va_mcp.tools.rbac_check import RbacCheckTool
+from va_mcp.tools.access_control.rbac_check import RbacCheckTool
 
 
 # ------------------------------------------------------------------
