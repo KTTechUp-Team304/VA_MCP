@@ -134,7 +134,7 @@ class HttpMethodTamperTool(BaseTool):
                     f"원본 메서드({original_method}) 외 다음 메서드로 접근이 허용되었습니다: "
                     f"{', '.join(vuln_methods)}"
                 ),
-                owasp=["A01 Broken Access Control"],
+                owasp=["A01:2025 Broken Access Control"],
                 cwe=["CWE-749"],
                 evidence=vulnerable_evidences,
                 recommendation=(
@@ -154,7 +154,7 @@ class HttpMethodTamperTool(BaseTool):
                 confidence=Confidence.MEDIUM,
                 title="OPTIONS 헤더에 위험 메서드 노출",
                 description=options_warning,
-                owasp=["A01 Broken Access Control"],
+                owasp=["A01:2025 Broken Access Control"],
                 cwe=["CWE-749"],
                 recommendation="Allow 헤더에서 불필요한 HTTP 메서드를 제거하세요.",
                 started_at=started_at,
@@ -171,7 +171,7 @@ class HttpMethodTamperTool(BaseTool):
             description=(
                 f"테스트한 메서드({', '.join(test_methods)})가 모두 적절히 차단되었습니다."
             ),
-            owasp=["A01 Broken Access Control"],
+            owasp=["A01:2025 Broken Access Control"],
             cwe=["CWE-749"],
             started_at=started_at,
             ended_at=ended_at,

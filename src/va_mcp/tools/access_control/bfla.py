@@ -110,7 +110,7 @@ class BflaTool(BaseTool):
                     f"저권한 역할({attacker.role})이 관리자 전용 기능에 접근하는 데 성공했습니다. "
                     f"취약 경로: {', '.join(vuln_paths)}"
                 ),
-                owasp=["A01 Broken Access Control"],
+                owasp=["A01:2025 Broken Access Control"],
                 cwe=["CWE-285"],
                 evidence=vulnerable_evidences,
                 recommendation=(
@@ -132,7 +132,7 @@ class BflaTool(BaseTool):
                 f"저권한 역할({attacker.role})의 관리 기능 접근이 모두 차단되었습니다. "
                 f"테스트한 경로 수: {request_count}"
             ),
-            owasp=["A01 Broken Access Control"],
+            owasp=["A01:2025 Broken Access Control"],
             cwe=["CWE-285"],
             started_at=started_at,
             ended_at=ended_at,
