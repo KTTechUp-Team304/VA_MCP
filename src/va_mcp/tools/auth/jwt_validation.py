@@ -6,8 +6,6 @@ from va_mcp.core import (
     ToolInput,
     ToolResult,
     Evidence,
-    ToolError,
-    AuthContext,
     ToolStatus,
     Severity,
     Confidence,
@@ -18,7 +16,6 @@ from va_mcp.core.utils import (
     utc_now_iso,
     mask_sensitive,
     sanitize_response_sample,
-    sanitize_request_body,
 )
 
 class JwtValidationTool(BaseTool):
@@ -74,10 +71,30 @@ class JwtValidationTool(BaseTool):
                 timeout=timeout_s,
             )
 
-            # 4) 취약 여부 판단
-            vulnerable = (res_valid.status_code == 200 and res_tampered.status_code == 200)
+            # 4) 정상 토큰이 유효하지 않으면 테스트 불가 → SKIPPED
+            if res_valid.status_code != 200:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="테스트 SKIPPED",
+                    description="정상 토큰이 유효하지 않아 JWT 변조 테스트를 건너뛰었습니다.",
+                    evidence=[],
+                    owasp=[],
+                    cwe=[],
+                    recommendation="",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=0,
+                )
 
-            # 5) 필드 셋팅
+            # 5) 취약 여부 판단
+            vulnerable = res_tampered.status_code == 200
+
+            # 6) 필드 셋팅
             owasp = ["A02:2025 Cryptographic Failures"]
             cwe = ["CWE-347"]
             if vulnerable:
@@ -97,7 +114,7 @@ class JwtValidationTool(BaseTool):
 
             ended_at = utc_now_iso()
 
-            # 6) 증거 생성 (변조 토큰 결과)
+            # 7) 증거 생성 (변조 토큰 결과)
             evidence = [
                 Evidence(
                     request={
@@ -112,7 +129,7 @@ class JwtValidationTool(BaseTool):
                 )
             ]
 
-            # 7) duration 계산
+            # 8) duration 계산
             duration_ms = int(
                 (
                     datetime.fromisoformat(ended_at.replace("Z", ""))

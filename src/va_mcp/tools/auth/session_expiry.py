@@ -7,8 +7,6 @@ from va_mcp.core import (
     ToolInput,
     ToolResult,
     Evidence,
-    ToolError,
-    AuthContext,
     ToolStatus,
     Severity,
     Confidence,
@@ -19,7 +17,6 @@ from va_mcp.core.utils import (
     utc_now_iso,
     mask_sensitive,
     sanitize_response_sample,
-    sanitize_request_body,
 )
 
 

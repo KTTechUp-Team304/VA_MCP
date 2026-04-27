@@ -6,8 +6,6 @@ from va_mcp.core import (
     ToolInput,
     ToolResult,
     Evidence,
-    ToolError,
-    AuthContext,
     ToolStatus,
     Severity,
     Confidence,
@@ -50,7 +48,6 @@ class CredentialEnumTool(BaseTool):
         try:
             url = tool_input.target.base_url + tool_input.request.path
             responses: list[requests.Response] = []
-            bodies: list[dict] = []
 
             # 2) body가 None인 경우 빈 dict로 방어
             orig_body = tool_input.request.body or {}
@@ -74,7 +71,6 @@ class CredentialEnumTool(BaseTool):
                     timeout=tool_input.options.timeout / 1000,
                 )
                 responses.append(res)
-                bodies.append(body)
 
             # 유효한 응답이 두 건 미만이면 스킵
             if len(responses) < 2:
@@ -130,7 +126,6 @@ class CredentialEnumTool(BaseTool):
             evidence: list[Evidence] = []
             for idx in (0, 1):
                 res = responses[idx]
-                body = bodies[idx]
                 note = "existing user" if idx == 0 else "non-existing user"
                 evidence.append(
                     Evidence(
@@ -138,7 +133,7 @@ class CredentialEnumTool(BaseTool):
                             "method": tool_input.request.method,
                             "path": tool_input.request.path,
                             "headers": mask_sensitive(tool_input.request.headers),
-                            "body": sanitize_request_body(body),
+                            "body": sanitize_request_body(orig_body),
                         },
                         response_status=res.status_code,
                         response_headers=mask_sensitive(dict(res.headers)),

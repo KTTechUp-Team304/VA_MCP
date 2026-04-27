@@ -6,8 +6,6 @@ from va_mcp.core import (
     ToolInput,
     ToolResult,
     Evidence,
-    ToolError,
-    AuthContext,
     ToolStatus,
     Severity,
     Confidence,

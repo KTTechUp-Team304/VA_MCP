@@ -24,3 +24,14 @@ def test_jwt_validation_passed(monkeypatch, base_input):
     tool = JwtValidationTool()
     result = tool.run(base_input)
     assert result.status == "passed"
+
+def test_jwt_validation_skipped_when_valid_token_fails(monkeypatch, base_input):
+    # 정상 토큰도 401 → 테스트 불가 → skipped
+    monkeypatch.setattr(
+        "va_mcp.tools.auth.jwt_validation.requests.request",
+        lambda *args, **kwargs: DummyResponse(401),
+    )
+    tool = JwtValidationTool()
+    result = tool.run(base_input)
+    assert result.status == "skipped"
+    assert result.evidence == []
