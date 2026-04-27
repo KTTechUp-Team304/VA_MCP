@@ -121,7 +121,7 @@ class ForcedBrowsingTool(BaseTool):
                     f"인증 없이 접근 가능한 숨겨진 경로가 발견되었습니다. "
                     f"노출 경로: {', '.join(exposed_paths)}"
                 ),
-                owasp=["A01 Broken Access Control"],
+                owasp=["A01:2025 Broken Access Control"],
                 cwe=["CWE-425"],
                 evidence=vulnerable_evidences,
                 recommendation=(
@@ -142,7 +142,7 @@ class ForcedBrowsingTool(BaseTool):
             description=(
                 f"테스트한 {request_count}개 경로에서 무단 접근 가능한 경로가 발견되지 않았습니다."
             ),
-            owasp=["A01 Broken Access Control"],
+            owasp=["A01:2025 Broken Access Control"],
             cwe=["CWE-425"],
             started_at=started_at,
             ended_at=ended_at,
@@ -175,19 +175,6 @@ class ForcedBrowsingTool(BaseTool):
         elif auth.auth_type == "cookie" and auth.cookie:
             headers["Cookie"] = auth.cookie
         return headers
-
-    def _skipped(self, started_at: str, reason: str) -> ToolResult:
-        return ToolResult(
-            tool_id=self.tool_id,
-            tool_name=self.tool_name,
-            status=ToolStatus.SKIPPED,
-            severity=Severity.INFO,
-            confidence=Confidence.LOW,
-            title="테스트 건너뜀",
-            description=reason,
-            started_at=started_at,
-            ended_at=utc_now_iso(),
-        )
 
     def _error(
         self,

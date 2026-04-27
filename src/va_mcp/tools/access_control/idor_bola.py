@@ -109,7 +109,7 @@ class IdorBolaTool(BaseTool):
                     f"공격자({attacker.role})가 소유자({owner.role})의 리소스({req.path})에 "
                     f"HTTP {attacker_resp.status_code} 응답으로 접근에 성공했습니다."
                 ),
-                owasp=["A01 Broken Access Control"],
+                owasp=["A01:2025 Broken Access Control"],
                 cwe=["CWE-639"],
                 evidence=[evidence],
                 recommendation=(
@@ -130,7 +130,7 @@ class IdorBolaTool(BaseTool):
             description=(
                 f"공격자({attacker.role})의 접근이 {attacker_resp.status_code}으로 차단되었습니다."
             ),
-            owasp=["A01 Broken Access Control"],
+            owasp=["A01:2025 Broken Access Control"],
             cwe=["CWE-639"],
             started_at=started_at,
             ended_at=ended_at,

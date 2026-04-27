@@ -145,7 +145,7 @@ class ParameterTamperTool(BaseTool):
                     f"권한 관련 파라미터를 변조하여 접근 제어를 우회하는 데 성공했습니다. "
                     f"취약 케이스 수: {len(vulnerable_evidences)}"
                 ),
-                owasp=["A01 Broken Access Control"],
+                owasp=["A01:2025 Broken Access Control"],
                 cwe=["CWE-639", "CWE-284"],
                 evidence=vulnerable_evidences,
                 recommendation=(
@@ -167,7 +167,7 @@ class ParameterTamperTool(BaseTool):
                 f"테스트한 파라미터 변조 케이스에서 접근 제어 우회가 확인되지 않았습니다. "
                 f"총 요청 수: {request_count}"
             ),
-            owasp=["A01 Broken Access Control"],
+            owasp=["A01:2025 Broken Access Control"],
             cwe=["CWE-639", "CWE-284"],
             started_at=started_at,
             ended_at=ended_at,

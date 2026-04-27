@@ -75,8 +75,10 @@ class CorsCheckTool(BaseTool):
         vulnerable_evidences: list[Evidence] = []
         worst_severity = Severity.INFO
 
+        max_requests = tool_input.options.max_requests
+
         try:
-            for origin in test_origins:
+            for origin in test_origins[:max_requests]:
                 result = self._test_origin(url, origin, auth, timeout_s)
                 if result is None:
                     continue
@@ -104,7 +106,7 @@ class CorsCheckTool(BaseTool):
                     f"서버가 신뢰할 수 없는 Origin의 교차 출처 요청을 허용합니다. "
                     f"취약 케이스 수: {len(vulnerable_evidences)}"
                 ),
-                owasp=["A01 Broken Access Control"],
+                owasp=["A01:2025 Broken Access Control"],
                 cwe=["CWE-942"],
                 evidence=vulnerable_evidences,
                 recommendation=(
@@ -126,7 +128,7 @@ class CorsCheckTool(BaseTool):
             description=(
                 f"테스트한 {len(test_origins)}개 Origin에 대해 교차 출처 접근이 허용되지 않았습니다."
             ),
-            owasp=["A01 Broken Access Control"],
+            owasp=["A01:2025 Broken Access Control"],
             cwe=["CWE-942"],
             started_at=started_at,
             ended_at=ended_at,

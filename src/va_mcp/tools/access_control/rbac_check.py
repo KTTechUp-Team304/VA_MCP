@@ -105,7 +105,7 @@ class RbacCheckTool(BaseTool):
                     f"저권한 역할({low_auth.role})로 고권한 역할({high_auth.role}) 전용 엔드포인트에 "
                     f"접근이 허용되었습니다. HTTP {low_resp.status_code} 응답 수신."
                 ),
-                owasp=["A01 Broken Access Control"],
+                owasp=["A01:2025 Broken Access Control"],
                 cwe=["CWE-285"],
                 evidence=[evidence],
                 recommendation=(
@@ -126,7 +126,7 @@ class RbacCheckTool(BaseTool):
             description=(
                 f"저권한 역할({low_auth.role})의 접근이 {low_resp.status_code}으로 차단되었습니다."
             ),
-            owasp=["A01 Broken Access Control"],
+            owasp=["A01:2025 Broken Access Control"],
             cwe=["CWE-285"],
             started_at=started_at,
             ended_at=ended_at,
