@@ -1,12 +1,13 @@
 """
-Path Traversal Testing Tool
+SSTI (Server-Side Template Injection) Testing Tool
 
 OWASP: A05:2025 - Injection
-CWE:   CWE-22 (Path Traversal)
+CWE:   CWE-1336 (SSTI)
 
 extra 옵션:
-    - payload_list (list[str]): 테스트할 경로 순회 페이로드 목록
-      기본값: 기본 페이로드 세트 사용
+    - payload_list (list[dict]): 테스트할 SSTI 페이로드 목록
+      각 항목은 {"payload": str, "expected": str} 형태
+      기본값: 기본 템플릿 엔진별 페이로드 세트 사용
 """
 
 from __future__ import annotations
@@ -26,40 +27,20 @@ from va_mcp.core.utils import (
 )
 
 
-# 기본 Path Traversal 페이로드
+# 기본 SSTI 페이로드 (페이로드 → 기대 결과 매핑)
 DEFAULT_PAYLOADS = [
-    "../../../etc/passwd",
-    "..\\..\\..\\etc\\passwd",
-    "....//....//....//etc/passwd",
-    "../../../etc/shadow",
-    "../../../windows/win.ini",
-    "..\\..\\..\\windows\\win.ini",
-    "../../../windows/system32/drivers/etc/hosts",
-    "....//....//....//windows/win.ini",
-    "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
-    "%2e%2e/%2e%2e/%2e%2e/etc/passwd",
-    "..%252f..%252f..%252fetc%252fpasswd",
-    "/etc/passwd",
-    "C:\\windows\\win.ini",
-]
-
-# 경로 순회 성공을 나타내는 응답 시그니처 (소문자 비교)
-PATH_TRAVERSAL_SIGNATURES = [
-    "root:",                        # /etc/passwd
-    "daemon:",                      # /etc/passwd
-    "/bin/bash",                    # /etc/passwd
-    "/bin/sh",                      # /etc/passwd
-    "[extensions]",                 # win.ini
-    "[fonts]",                      # win.ini
-    "for 16-bit app support",       # win.ini
-    "# host database",              # hosts 파일
-    "localhost",                    # hosts 파일
+    {"payload": "{{7*7}}", "expected": "49"},           # Jinja2 / Twig
+    {"payload": "{{7*'7'}}", "expected": "7777777"},    # Jinja2 특화
+    {"payload": "${7*7}", "expected": "49"},             # Mako / Freemarker
+    {"payload": "<%= 7*7 %>", "expected": "49"},         # ERB (Ruby)
+    {"payload": "#{7*7}", "expected": "49"},             # Pebble / Java EL
+    {"payload": "{7*7}", "expected": "49"},              # Smarty
 ]
 
 
-class PathTraversalTool(BaseTool):
-    tool_id = "path_traversal"
-    tool_name = "Path Traversal Testing"
+class SstiInjectionTool(BaseTool):
+    tool_id = "ssti_injection"
+    tool_name = "SSTI (Server-Side Template Injection) Testing"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         started_at = utc_now_iso()
@@ -124,9 +105,12 @@ class PathTraversalTool(BaseTool):
             request_count = 0
 
             for param in test_params:
-                for payload in payload_list:
+                for entry in payload_list:
                     if request_count >= max_requests:
                         break
+
+                    payload = entry["payload"]
+                    expected = entry["expected"]
 
                     try:
                         if method == "GET":
@@ -165,13 +149,40 @@ class PathTraversalTool(BaseTool):
 
                         request_count += 1
 
-                        response_lower = resp.text.lower()
-                        detected = [
-                            sig for sig in PATH_TRAVERSAL_SIGNATURES
-                            if sig in response_lower
-                        ]
+                        # ── 템플릿 연산 결과가 응답에 포함되는지 확인 ──
+                        if expected in resp.text:
+                            # 오탐 방지: 카나리 값으로 재확인
+                            if request_count < max_requests:
+                                try:
+                                    if method == "GET":
+                                        canary_query = dict(query)
+                                        canary_query[param] = "SSTI_CANARY_98765"
+                                        canary_resp = http_client.get(
+                                            full_url,
+                                            params=canary_query,
+                                            headers=headers,
+                                            timeout=timeout_sec,
+                                            allow_redirects=False,
+                                        )
+                                    else:
+                                        canary_body = dict(body)
+                                        canary_body[param] = "SSTI_CANARY_98765"
+                                        canary_resp = http_client.request(
+                                            method,
+                                            full_url,
+                                            headers=headers,
+                                            json=canary_body,
+                                            timeout=timeout_sec,
+                                            allow_redirects=False,
+                                        )
+                                    request_count += 1
 
-                        if detected:
+                                    # 카나리에서도 expected가 있으면 오탐
+                                    if expected in canary_resp.text:
+                                        continue
+                                except http_client.RequestException:
+                                    request_count += 1
+
                             evidences.append(
                                 Evidence(
                                     request=request_info,
@@ -179,8 +190,8 @@ class PathTraversalTool(BaseTool):
                                     response_headers=dict(resp.headers),
                                     response_body_sample=sanitize_response_sample(resp.text),
                                     note=(
-                                        f"파라미터 '{param}'에 페이로드 '{payload}' 삽입 시 "
-                                        f"파일 내용 시그니처 감지: {detected[:3]}"
+                                        f"파라미터 '{param}'에 SSTI 페이로드 '{payload}' 삽입 시 "
+                                        f"템플릿 연산 결과 '{expected}'가 응답에 포함됨"
                                     ),
                                 )
                             )
@@ -199,21 +210,21 @@ class PathTraversalTool(BaseTool):
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
                     status=ToolStatus.VULNERABLE,
-                    severity=Severity.HIGH,
+                    severity=Severity.CRITICAL,
                     confidence=Confidence.HIGH,
-                    title="Path Traversal 취약점 발견",
+                    title="SSTI (Server-Side Template Injection) 취약점 발견",
                     description=(
-                        f"총 {len(evidences)}건의 경로 순회 징후가 감지되었습니다. "
+                        f"총 {len(evidences)}건의 SSTI 징후가 감지되었습니다. "
                         f"테스트 파라미터: {test_params}"
                     ),
                     owasp=["A05:2025 Injection"],
-                    cwe=["CWE-22"],
+                    cwe=["CWE-1336"],
                     evidence=evidences,
                     recommendation=(
-                        "1. 사용자 입력을 파일 경로에 직접 사용하지 마세요.\n"
-                        "2. 파일 접근 시 기본 디렉토리(base directory)를 고정하고 벗어나지 못하게 하세요.\n"
-                        "3. 입력값에서 ../ 등 경로 순회 문자를 필터링하세요.\n"
-                        "4. 화이트리스트 방식으로 허용된 파일명만 접근하게 하세요."
+                        "1. 사용자 입력을 템플릿 문자열에 직접 삽입하지 마세요.\n"
+                        "2. 샌드박스가 적용된 템플릿 엔진을 사용하세요.\n"
+                        "3. 입력값에 대한 화이트리스트 검증을 적용하세요.\n"
+                        "4. 템플릿 엔진의 보안 설정을 확인하세요."
                     ),
                     started_at=started_at,
                     ended_at=ended_at,
@@ -226,14 +237,14 @@ class PathTraversalTool(BaseTool):
                 status=ToolStatus.PASSED,
                 severity=Severity.INFO,
                 confidence=Confidence.MEDIUM,
-                title="Path Traversal 취약점 미발견",
+                title="SSTI 취약점 미발견",
                 description=(
                     f"테스트한 파라미터({test_params})에서 "
-                    f"경로 순회 징후가 감지되지 않았습니다. "
+                    f"SSTI 징후가 감지되지 않았습니다. "
                     f"(총 {request_count}건 요청)"
                 ),
                 owasp=["A05:2025 Injection"],
-                cwe=["CWE-22"],
+                cwe=["CWE-1336"],
                 started_at=started_at,
                 ended_at=ended_at,
             )
@@ -246,7 +257,7 @@ class PathTraversalTool(BaseTool):
                 status=ToolStatus.ERROR,
                 severity=Severity.INFO,
                 confidence=Confidence.LOW,
-                title="Path Traversal 테스트 실행 오류",
+                title="SSTI 테스트 실행 오류",
                 description=f"테스트 실행 중 예외가 발생했습니다: {str(exc)}",
                 started_at=started_at,
                 ended_at=ended_at,
