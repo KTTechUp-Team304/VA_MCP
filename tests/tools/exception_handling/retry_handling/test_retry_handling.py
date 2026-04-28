@@ -15,10 +15,12 @@ def test_retry_handling_vulnerable(mock_request):
     # 5번 모두 200 성공 응답을 반환 (방어 실패)
     mock_resp = MagicMock()
     mock_resp.status_code = 200
+    mock_resp.text = "가짜 성공 응답 바디"
     mock_request.return_value = mock_resp
 
     tool = RetryHandlingTool()
     result = tool.run(make_tool_input())
+
     assert result.status == "vulnerable"
 
 @patch('requests.request')
@@ -26,6 +28,7 @@ def test_retry_handling_passed(mock_request):
     # 요청 시 429 Too Many Requests 반환 (방어 성공)
     mock_resp = MagicMock()
     mock_resp.status_code = 429
+    mock_resp.text = "가짜 성공 응답 바디"
     mock_request.return_value = mock_resp
 
     tool = RetryHandlingTool()

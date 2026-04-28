@@ -39,10 +39,10 @@ class RetryHandlingTool(BaseTool):
                     cwe=["CWE-307"],
                     evidence=[
                         Evidence(
-                            request={"method": method, "path": target_url, "headers": mask_sensitive(headers), "note": f"Sent {max_req} identical requests"},
+                            request={"method": method, "path": target_url, "headers": mask_sensitive(headers)},
                             response_status=responses[-1],
-                            response_body_sample="Success or identical error bypass",
-                            note="반복적인 요청에도 차단이나 지연 정책이 적용되지 않음"
+                            response_body_sample=sanitize_response_sample(""),
+                            note=f"{max_req}회의 반복적인 요청에도 차단이나 지연 정책이 적용되지 않음"
                         )
                     ],
                     recommendation="주요 API 엔드포인트에 IP 기반 또는 계정 기반의 Rate Limiting을 적용하세요.",
