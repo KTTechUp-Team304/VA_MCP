@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from va_mcp.core.constants import Confidence, Severity, ToolStatus
 from va_mcp.core.schemas import ApiRequest, TargetInfo, ToolInput, ToolOptions
-from va_mcp.tools.cmd_injection import CmdInjectionTool
+from va_mcp.tools.injection.cmd_injection import CmdInjectionTool
 
 
 def make_tool_input(
@@ -15,6 +15,7 @@ def make_tool_input(
     query: dict | None = None,
     body: dict | None = None,
     headers: dict | None = None,
+    safe_mode: bool = True,
     **extra_opts,
 ) -> ToolInput:
     return ToolInput(
@@ -26,7 +27,7 @@ def make_tool_input(
             query=query or {},
             body=body,
         ),
-        options=ToolOptions(extra=extra_opts),
+        options=ToolOptions(safe_mode=safe_mode, extra=extra_opts),
     )
 
 
@@ -37,10 +38,11 @@ def test_passed():
     mock_resp.text = '{"result": "ok"}'
     mock_resp.headers = {"Content-Type": "application/json"}
 
-    with patch("va_mcp.tools.cmd_injection.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.cmd_injection.http_client.get", return_value=mock_resp):
         result = CmdInjectionTool().run(
             make_tool_input(
                 query={"cmd": "status"},
+                safe_mode=False,
                 payload_list=["; ls", "| whoami"],
             )
         )
@@ -56,10 +58,11 @@ def test_vulnerable():
     mock_resp.text = "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin"
     mock_resp.headers = {"Content-Type": "text/plain"}
 
-    with patch("va_mcp.tools.cmd_injection.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.cmd_injection.http_client.get", return_value=mock_resp):
         result = CmdInjectionTool().run(
             make_tool_input(
                 query={"cmd": "status"},
+                safe_mode=False,
                 payload_list=["; cat /etc/passwd"],
             )
         )
@@ -72,7 +75,7 @@ def test_vulnerable():
 def test_error():
     """예외 발생 → ERROR + errors"""
     with patch(
-        "va_mcp.tools.cmd_injection.http_client.get",
+        "va_mcp.tools.injection.cmd_injection.http_client.get",
         side_effect=Exception("connection refused"),
     ):
         result = CmdInjectionTool().run(
@@ -104,12 +107,13 @@ def test_vulnerable_post():
     mock_resp.text = "uid=0(root) gid=0(root)"
     mock_resp.headers = {"Content-Type": "text/plain"}
 
-    with patch("va_mcp.tools.cmd_injection.http_client.request", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.cmd_injection.http_client.request", return_value=mock_resp):
         result = CmdInjectionTool().run(
             make_tool_input(
                 method="POST",
                 path="/api/execute",
                 body={"command": "ping"},
+                safe_mode=False,
                 payload_list=["; whoami"],
             )
         )

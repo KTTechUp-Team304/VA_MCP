@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from va_mcp.core.constants import Confidence, Severity, ToolStatus
 from va_mcp.core.schemas import ApiRequest, TargetInfo, ToolInput, ToolOptions
-from va_mcp.tools.path_traversal import PathTraversalTool
+from va_mcp.tools.injection.path_traversal import PathTraversalTool
 
 
 def make_tool_input(
@@ -37,7 +37,7 @@ def test_passed():
     mock_resp.text = '{"content": "hello world"}'
     mock_resp.headers = {"Content-Type": "application/json"}
 
-    with patch("va_mcp.tools.path_traversal.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.path_traversal.http_client.get", return_value=mock_resp):
         result = PathTraversalTool().run(
             make_tool_input(
                 query={"file": "readme.txt"},
@@ -56,7 +56,7 @@ def test_vulnerable():
     mock_resp.text = "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin"
     mock_resp.headers = {"Content-Type": "text/plain"}
 
-    with patch("va_mcp.tools.path_traversal.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.path_traversal.http_client.get", return_value=mock_resp):
         result = PathTraversalTool().run(
             make_tool_input(
                 query={"file": "readme.txt"},
@@ -76,7 +76,7 @@ def test_vulnerable_windows():
     mock_resp.text = "; for 16-bit app support\n[fonts]\n[extensions]"
     mock_resp.headers = {"Content-Type": "text/plain"}
 
-    with patch("va_mcp.tools.path_traversal.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.path_traversal.http_client.get", return_value=mock_resp):
         result = PathTraversalTool().run(
             make_tool_input(
                 query={"file": "readme.txt"},
@@ -91,7 +91,7 @@ def test_vulnerable_windows():
 def test_error():
     """예외 발생 → ERROR + errors"""
     with patch(
-        "va_mcp.tools.path_traversal.http_client.get",
+        "va_mcp.tools.injection.path_traversal.http_client.get",
         side_effect=Exception("connection refused"),
     ):
         result = PathTraversalTool().run(
