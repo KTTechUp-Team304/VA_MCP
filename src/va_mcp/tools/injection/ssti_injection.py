@@ -8,6 +8,11 @@ extra 옵션:
     - payload_list (list[dict]): 테스트할 SSTI 페이로드 목록
       각 항목은 {"payload": str, "expected": str} 형태
       기본값: 기본 템플릿 엔진별 페이로드 세트 사용
+
+주의:
+    - 카나리 검증을 위해 max_requests는 최소 2 이상이어야 합니다.
+      1로 설정 시 카나리 검증 없이 결과를 반환하며,
+      이 경우 confidence가 HIGH 대신 MEDIUM으로 설정됩니다.
 """
 
 from __future__ import annotations
@@ -37,6 +42,20 @@ DEFAULT_PAYLOADS = [
     {"payload": "{7*7}", "expected": "49"},              # Smarty
 ]
 
+# 카나리 검증에 필요한 최소 요청 수
+MIN_REQUESTS_FOR_CANARY = 2
+
+
+def _validate_payload_entry(entry: object) -> bool:
+    """페이로드 항목이 올바른 형식인지 검증"""
+    if not isinstance(entry, dict):
+        return False
+    if "payload" not in entry or "expected" not in entry:
+        return False
+    if not isinstance(entry["payload"], str) or not isinstance(entry["expected"], str):
+        return False
+    return True
+
 
 class SstiInjectionTool(BaseTool):
     tool_id = "ssti_injection"
@@ -64,10 +83,53 @@ class SstiInjectionTool(BaseTool):
 
             # ── 옵션 추출 ──────────────────────────────────
             extra = tool_input.options.extra
-            payload_list = extra.get("payload_list", DEFAULT_PAYLOADS)
+            raw_payload_list = extra.get("payload_list", DEFAULT_PAYLOADS)
 
             max_requests = tool_input.options.max_requests
             timeout_sec = tool_input.options.timeout / 1000
+
+            # ── 페이로드 형식 검증 ─────────────────────────
+            payload_list = []
+            invalid_entries = []
+
+            for i, entry in enumerate(raw_payload_list):
+                if _validate_payload_entry(entry):
+                    payload_list.append(entry)
+                else:
+                    invalid_entries.append(
+                        f"[{i}] {repr(entry)}"
+                    )
+
+            if invalid_entries and not payload_list:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.ERROR,
+                    severity=Severity.INFO,
+                    confidence=Confidence.LOW,
+                    title="페이로드 형식 오류",
+                    description=(
+                        "모든 커스텀 페이로드가 잘못된 형식입니다. "
+                        '각 항목은 {"payload": str, "expected": str} 형태여야 합니다. '
+                        f"잘못된 항목: {', '.join(invalid_entries[:5])}"
+                    ),
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    errors=[
+                        build_tool_error(
+                            error_code=ErrorCode.INVALID_PARAMS,
+                            error_message=(
+                                '페이로드는 {"payload": str, "expected": str} '
+                                "형식의 dict 리스트여야 합니다."
+                            ),
+                            retryable=False,
+                        )
+                    ],
+                )
+
+            # ── max_requests 최솟값 경고 ───────────────────
+            canary_enabled = max_requests >= MIN_REQUESTS_FOR_CANARY
 
             # ── 테스트 대상 파라미터 결정 ─────────────────────
             method = tool_input.request.method.upper()
@@ -103,6 +165,7 @@ class SstiInjectionTool(BaseTool):
             # ── 페이로드 테스트 루프 ──────────────────────────
             evidences: list[Evidence] = []
             request_count = 0
+            canary_skipped = False
 
             for param in test_params:
                 for entry in payload_list:
@@ -151,8 +214,9 @@ class SstiInjectionTool(BaseTool):
 
                         # ── 템플릿 연산 결과가 응답에 포함되는지 확인 ──
                         if expected in resp.text:
-                            # 오탐 방지: 카나리 값으로 재확인
-                            if request_count < max_requests:
+
+                            # 카나리 검증 가능 여부 확인
+                            if canary_enabled and request_count < max_requests:
                                 try:
                                     if method == "GET":
                                         canary_query = dict(query)
@@ -182,6 +246,9 @@ class SstiInjectionTool(BaseTool):
                                         continue
                                 except http_client.RequestException:
                                     request_count += 1
+                            else:
+                                # 카나리 검증 불가 (max_requests 부족)
+                                canary_skipped = True
 
                             evidences.append(
                                 Evidence(
@@ -192,6 +259,7 @@ class SstiInjectionTool(BaseTool):
                                     note=(
                                         f"파라미터 '{param}'에 SSTI 페이로드 '{payload}' 삽입 시 "
                                         f"템플릿 연산 결과 '{expected}'가 응답에 포함됨"
+                                        f"{' (카나리 검증 생략: max_requests 부족)' if canary_skipped else ''}"
                                     ),
                                 )
                             )
@@ -205,17 +273,35 @@ class SstiInjectionTool(BaseTool):
 
             # ── 결과 판정 ──────────────────────────────────
             if evidences:
+                # 카나리 검증 여부에 따라 confidence 결정
+                result_confidence = (
+                    Confidence.MEDIUM if canary_skipped else Confidence.HIGH
+                )
+
                 ended_at = utc_now_iso()
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
                     status=ToolStatus.VULNERABLE,
                     severity=Severity.CRITICAL,
-                    confidence=Confidence.HIGH,
+                    confidence=result_confidence,
                     title="SSTI (Server-Side Template Injection) 취약점 발견",
                     description=(
                         f"총 {len(evidences)}건의 SSTI 징후가 감지되었습니다. "
                         f"테스트 파라미터: {test_params}"
+                        + (
+                            f" (⚠️ max_requests={max_requests}으로 카나리 검증이 "
+                            f"생략되어 confidence가 MEDIUM입니다. "
+                            f"정확한 탐지를 위해 max_requests를 "
+                            f"{MIN_REQUESTS_FOR_CANARY} 이상으로 설정하세요.)"
+                            if canary_skipped
+                            else ""
+                        )
+                        + (
+                            f" (⚠️ 유효하지 않은 페이로드 {len(invalid_entries)}건 무시됨)"
+                            if invalid_entries
+                            else ""
+                        )
                     ),
                     owasp=["A05:2025 Injection"],
                     cwe=["CWE-1336"],
@@ -242,6 +328,11 @@ class SstiInjectionTool(BaseTool):
                     f"테스트한 파라미터({test_params})에서 "
                     f"SSTI 징후가 감지되지 않았습니다. "
                     f"(총 {request_count}건 요청)"
+                    + (
+                        f" (⚠️ 유효하지 않은 페이로드 {len(invalid_entries)}건 무시됨)"
+                        if invalid_entries
+                        else ""
+                    )
                 ),
                 owasp=["A05:2025 Injection"],
                 cwe=["CWE-1336"],
