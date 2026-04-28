@@ -118,7 +118,7 @@ class SstiInjectionTool(BaseTool):
                     ended_at=ended_at,
                     errors=[
                         build_tool_error(
-                            error_code=ErrorCode.INVALID_PARAMS,
+                            error_code=ErrorCode.INVALID_INPUT,
                             error_message=(
                                 '페이로드는 {"payload": str, "expected": str} '
                                 "형식의 dict 리스트여야 합니다."
