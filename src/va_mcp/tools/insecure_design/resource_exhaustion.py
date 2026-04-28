@@ -105,6 +105,27 @@ class ResourceExhaustionTool(BaseTool):
                     ],
                 )
 
+            if not isinstance(test_field, str) or not test_field.strip():
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.ERROR,
+                    severity=Severity.INFO,
+                    confidence=Confidence.LOW,
+                    title="입력값 오류",
+                    description="test_field는 비어 있지 않은 문자열이어야 합니다.",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    errors=[
+                        build_tool_error(
+                            error_code=ErrorCode.INVALID_INPUT,
+                            error_message=f"test_field 값이 유효하지 않습니다: {test_field!r}",
+                            retryable=False,
+                        )
+                    ],
+                )
+
             # ── URL 조립 ──
             base_url = tool_input.target.base_url.rstrip("/")
             path = tool_input.request.path

@@ -181,9 +181,9 @@ class RateLimitCheckTool(BaseTool):
                     "headers": mask_sensitive(headers),
                     "body": sanitize_request_body(body),
                 },
-                response_status=status_codes[-1] if status_codes else 0,
-                response_headers={},
-                response_body_sample="",
+                response_status=resp.status_code,
+                response_headers=dict(resp.headers),
+                response_body_sample=sanitize_response_sample(resp.text),
                 note=(
                     f"{actual_count}회 반복 요청 후에도 429 응답 없음. "
                     f"응답 코드 분포: {dict(_count_codes(status_codes))}"
