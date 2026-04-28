@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 from va_mcp.core.constants import Confidence, Severity, ToolStatus
 from va_mcp.core.schemas import ApiRequest, TargetInfo, ToolInput, ToolOptions
-from va_mcp.tools.sql_injection import SqlInjectionTool
+from va_mcp.tools.injection.sql_injection import SqlInjectionTool
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ def test_passed():
     mock_resp.text = '{"results": [], "total": 0}'
     mock_resp.headers = {"Content-Type": "application/json"}
 
-    with patch("va_mcp.tools.sql_injection.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.sql_injection.http_client.get", return_value=mock_resp):
         result = SqlInjectionTool().run(
             make_tool_input(
                 method="GET",
@@ -78,7 +78,7 @@ def test_vulnerable():
     )
     mock_resp.headers = {"Content-Type": "text/html"}
 
-    with patch("va_mcp.tools.sql_injection.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.sql_injection.http_client.get", return_value=mock_resp):
         result = SqlInjectionTool().run(
             make_tool_input(
                 method="GET",
@@ -97,7 +97,7 @@ def test_vulnerable():
 def test_error():
     """예외 발생 → ERROR + errors"""
     with patch(
-        "va_mcp.tools.sql_injection.http_client.get",
+        "va_mcp.tools.injection.sql_injection.http_client.get",
         side_effect=Exception("connection refused"),
     ):
         result = SqlInjectionTool().run(
@@ -150,7 +150,7 @@ def test_vulnerable_post():
     mock_resp.text = "Unclosed quotation mark after the character string"
     mock_resp.headers = {"Content-Type": "text/plain"}
 
-    with patch("va_mcp.tools.sql_injection.http_client.request", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.sql_injection.http_client.request", return_value=mock_resp):
         result = SqlInjectionTool().run(
             make_tool_input(
                 method="POST",
@@ -177,7 +177,7 @@ def test_max_requests_limit():
         mock_resp.headers = {}
         return mock_resp
 
-    with patch("va_mcp.tools.sql_injection.http_client.get", side_effect=counting_get):
+    with patch("va_mcp.tools.injection.sql_injection.http_client.get", side_effect=counting_get):
         result = SqlInjectionTool().run(
             make_tool_input(
                 method="GET",
@@ -197,7 +197,7 @@ def test_sensitive_headers_masked():
     mock_resp.text = "You have an error in your SQL syntax"
     mock_resp.headers = {"Content-Type": "text/html"}
 
-    with patch("va_mcp.tools.sql_injection.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.sql_injection.http_client.get", return_value=mock_resp):
         result = SqlInjectionTool().run(
             make_tool_input(
                 method="GET",
@@ -218,7 +218,7 @@ def test_time_based_blind():
     import requests as req_lib
 
     with patch(
-        "va_mcp.tools.sql_injection.http_client.get",
+        "va_mcp.tools.injection.sql_injection.http_client.get",
         side_effect=req_lib.Timeout("Request timed out"),
     ):
         result = SqlInjectionTool().run(

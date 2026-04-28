@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from va_mcp.core.constants import Confidence, Severity, ToolStatus
 from va_mcp.core.schemas import ApiRequest, TargetInfo, ToolInput, ToolOptions
-from va_mcp.tools.xss_reflected import XssReflectedTool
+from va_mcp.tools.injection.xss_reflected import XssReflectedTool
 
 
 def make_tool_input(
@@ -37,7 +37,7 @@ def test_passed():
     mock_resp.text = '{"results": [], "query": "sanitized_input"}'
     mock_resp.headers = {"Content-Type": "application/json"}
 
-    with patch("va_mcp.tools.xss_reflected.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.xss_reflected.http_client.get", return_value=mock_resp):
         result = XssReflectedTool().run(
             make_tool_input(
                 query={"q": "hello"},
@@ -57,7 +57,7 @@ def test_vulnerable():
     mock_resp.text = f'<html><body>검색 결과: {payload}</body></html>'
     mock_resp.headers = {"Content-Type": "text/html"}
 
-    with patch("va_mcp.tools.xss_reflected.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.xss_reflected.http_client.get", return_value=mock_resp):
         result = XssReflectedTool().run(
             make_tool_input(
                 query={"q": "hello"},
@@ -79,7 +79,7 @@ def test_vulnerable_img_tag():
     mock_resp.text = f'<html><body>{payload}</body></html>'
     mock_resp.headers = {"Content-Type": "text/html"}
 
-    with patch("va_mcp.tools.xss_reflected.http_client.get", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.xss_reflected.http_client.get", return_value=mock_resp):
         result = XssReflectedTool().run(
             make_tool_input(
                 query={"q": "hello"},
@@ -94,7 +94,7 @@ def test_vulnerable_img_tag():
 def test_error():
     """예외 발생 → ERROR + errors"""
     with patch(
-        "va_mcp.tools.xss_reflected.http_client.get",
+        "va_mcp.tools.injection.xss_reflected.http_client.get",
         side_effect=Exception("connection refused"),
     ):
         result = XssReflectedTool().run(
@@ -127,7 +127,7 @@ def test_vulnerable_post():
     mock_resp.text = f'<html><body>입력값: {payload}</body></html>'
     mock_resp.headers = {"Content-Type": "text/html"}
 
-    with patch("va_mcp.tools.xss_reflected.http_client.request", return_value=mock_resp):
+    with patch("va_mcp.tools.injection.xss_reflected.http_client.request", return_value=mock_resp):
         result = XssReflectedTool().run(
             make_tool_input(
                 method="POST",
