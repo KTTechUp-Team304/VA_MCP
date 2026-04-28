@@ -14,7 +14,7 @@ from va_mcp.core import (
 from va_mcp.core.utils import (
     build_tool_error,
     mask_sensitive,
-    sanitize_request_body,      # 🎯 [추가] request_body 제한을 위한 필수 유틸
+    sanitize_request_body,
     sanitize_response_sample,
     utc_now_iso,
 )
@@ -35,7 +35,6 @@ class TimeoutHandlingTool(BaseTool):
         target = tool_input.target
         request_info = tool_input.request
         
-        # [규정 준수] status=SKIPPED 시 evidence=[] 고정
         if not request_info:
             return ToolResult(
                 tool_id=self.tool_id,
@@ -43,18 +42,18 @@ class TimeoutHandlingTool(BaseTool):
                 status=ToolStatus.SKIPPED.value,
                 started_at=started_at,
                 ended_at=utc_now_iso(),
-                evidence=[]
+                evidence=[]  # SKIPPED 시 반드시 빈 리스트
             )
 
-        timeout_ms = tool_input.options.timeout
-        timeout_sec = timeout_ms / 1000.0
+        # 🎯 불법 파라미터(delay_seconds) 삭제 및 표준 timeout 옵션 사용
+        timeout_sec = tool_input.options.timeout / 1000.0
         
         target_url = f"{target.base_url.rstrip('/')}/{request_info.path.lstrip('/')}"
         method = request_info.method.upper()
         
-        # [리뷰어 수정 4 만족] 원본 데이터 변조 방지 (얕은 복사)
+        # 🎯 원본 데이터 변조 방지 (얕은 복사)
         headers = dict(request_info.headers)
-        headers.setdefault("X-Test-Delay", "true")
+        headers.setdefault("X-Test-Delay", "true")  # 기존 서버 페이로드 유지
         
         evidence_list = []
         status = ToolStatus.PASSED.value
@@ -68,12 +67,12 @@ class TimeoutHandlingTool(BaseTool):
                 headers=headers,
                 params=request_info.query,
                 json=request_info.body,
-                timeout=timeout_sec
+                timeout=timeout_sec  # 🎯 표준 timeout 적용
             )
             
             status_code = response.status_code
             
-            # [리뷰어 수정 5 만족] 오탐 방지: 정상 응답(200, 400 등)은 취약점 아님, 500에러만 취약점.
+            # 오탐 방지: 정상 응답은 안전, 500 에러만 취약점
             is_vulnerable = (status_code == 500)
             
             if is_vulnerable:
@@ -81,13 +80,13 @@ class TimeoutHandlingTool(BaseTool):
                 severity = Severity.HIGH.value
                 confidence = Confidence.HIGH.value
             
-            # [규정 준수] mask_sensitive, sanitize_request_body, sanitize_response_sample 완벽 적용
+            # 유틸리티 강제 통과 (마스킹, 바디 2000자 제한)
             evidence_list.append(Evidence(
                 request={
                     "method": method,
                     "path": target_url,
                     "headers": mask_sensitive(headers),
-                    "body": sanitize_request_body(request_info.body)  # 🎯 놓쳤던 규정 완벽 조치!
+                    "body": sanitize_request_body(request_info.body)
                 },
                 response_status=status_code,
                 response_headers=dict(response.headers),
@@ -105,21 +104,21 @@ class TimeoutHandlingTool(BaseTool):
                     "method": method,
                     "path": target_url,
                     "headers": mask_sensitive(headers),
-                    "body": sanitize_request_body(request_info.body)  # 🎯 일관성을 위해 여기도 조치
+                    "body": sanitize_request_body(request_info.body)
                 },
                 response_status=0,
                 note=f"서버가 설정된 {timeout_sec}초 내에 응답을 반환하지 못해 타임아웃 발생"
             ))
             
         except Exception as e:
-            # [규정 준수] ERROR 상태 시 severity=INFO, confidence=LOW 고정 및 build_tool_error 규격 사용
+            # [규정 준수] ERROR 상태 시 고정값 세팅 및 build_tool_error 규격(Enum.value) 사용
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
                 status=ToolStatus.ERROR.value,
                 severity=Severity.INFO.value,
                 confidence=Confidence.LOW.value,
-                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR, str(e))],
+                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e))],
                 started_at=started_at,
                 ended_at=utc_now_iso(),
             )
