@@ -53,7 +53,7 @@ class ErrorCodeConsistencyTool(BaseTool):
                     title="오류 응답 규격 불일치", 
                     description="발생하는 에러 종류에 따라 응답 데이터의 Content-Type 형식이 다르게 반환됩니다.",
                     owasp=["A10:2025 Mishandling of Exceptional Conditions"],
-                    cwe=["CWE-703"],
+                    cwe=["CWE-203"],
                     evidence=[
                         Evidence(
                             request={"method": "POST", "path": req1_url, "headers": mask_sensitive(headers)},
