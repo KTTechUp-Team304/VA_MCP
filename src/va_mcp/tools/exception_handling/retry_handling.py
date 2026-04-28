@@ -2,7 +2,7 @@ import requests
 from va_mcp.core.base import BaseTool
 from va_mcp.core.constants import Confidence, ErrorCode, Severity, ToolStatus
 from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
-from va_mcp.core.utils import build_tool_error, utc_now_iso, mask_sensitive, sanitize_response_sample
+from va_mcp.core.utils import build_tool_error, utc_now_iso, mask_sensitive, sanitize_request_body, sanitize_response_sample
 
 class RetryHandlingTool(BaseTool):
     """
@@ -33,18 +33,29 @@ class RetryHandlingTool(BaseTool):
         method = tool_input.request.method if tool_input.request else "POST"
         headers = dict(tool_input.request.headers)
         
-        responses = []
+        responses: list[requests.Response] = []
         try:
             # 연속 요청 발송
             for _ in range(max_req):
-                res = requests.request(method=method, url=target_url, headers=headers, timeout=timeout_sec, verify=False)
-                responses.append(res.status_code)
+                res = requests.request(
+                    method=method, 
+                    url=target_url, 
+                    headers=headers, 
+                    timeout=timeout_sec, 
+                    verify=False
+                )
+                # 🎯 res.status_code가 아니라 res 객체 자체를 저장
+                responses.append(res)
 
-            # 모든 요청이 동일하게 성공(200)하거나 401 등을 뱉으며 429(Too Many Requests)로 막히지 않으면 취약
-            is_vulnerable = 429 not in responses
+            # 🎯 응답 객체 리스트에서 상태 코드만 다시 뽑아서 검사합니다.
+            status_codes = [r.status_code for r in responses]
+            is_vulnerable = 429 not in status_codes
 
             ended_at = utc_now_iso()
             if is_vulnerable:
+                # 🎯 1. 리스트에 저장된 마지막 '응답 객체'를 변수로 빼냅니다.
+                last_response = responses[-1]
+                
                 return ToolResult(
                     tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.VULNERABLE.value,
                     severity=Severity.HIGH.value, confidence=Confidence.MEDIUM.value,
@@ -54,9 +65,15 @@ class RetryHandlingTool(BaseTool):
                     cwe=["CWE-307"],
                     evidence=[
                         Evidence(
-                            request={"method": method, "path": target_url, "headers": mask_sensitive(headers)},
-                            response_status=responses[-1],
-                            response_body_sample=sanitize_response_sample(""),
+                            request={
+                                "method": method, 
+                                "path": target_url, 
+                                "headers": mask_sensitive(headers),
+                                "body": sanitize_request_body(tool_input.request.body)  # 🎯 프로젝트 규정: 요청 바디도 추가
+                            },
+                            # 🎯 2. 비어있던 텍스트("") 대신, 진짜 텍스트(last_response.text)를 넣습니다.
+                            response_status=last_response.status_code,
+                            response_body_sample=sanitize_response_sample(last_response.text),
                             note=f"{max_req}회의 반복적인 요청에도 차단이나 지연 정책이 적용되지 않음"
                         )
                     ],
@@ -77,6 +94,6 @@ class RetryHandlingTool(BaseTool):
                 tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.ERROR.value,
                 severity=Severity.INFO.value, confidence=Confidence.LOW.value,
                 title="도구 실행 오류", description="점검 중 통신 오류가 발생했습니다.",
-                errors=[build_tool_error(error_code=ErrorCode.INTERNAL_ERROR, error_message=str(e), retryable=False)],
+                errors=[build_tool_error(error_code=ErrorCode.INTERNAL_ERROR.value, error_message=str(e), retryable=False)],
                 started_at=started_at, ended_at=ended_at
             )
