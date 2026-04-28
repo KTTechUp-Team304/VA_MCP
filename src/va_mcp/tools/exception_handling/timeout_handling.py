@@ -131,6 +131,8 @@ class TimeoutHandlingTool(BaseTool):
             confidence=confidence,
             title="불충분한 서버 측 타임아웃 처리" if status == ToolStatus.VULNERABLE.value else "",
             description="인위적인 지연 요청 시 서버가 내부 오류를 일으키거나 응답을 무한 대기하여 가용성에 영향을 줄 수 있음" if status == ToolStatus.VULNERABLE.value else "",
+            owasp=["A10:2025 Mishandling of Exceptional Conditions"] if status == ToolStatus.VULNERABLE.value else "",
+            cwe=["CWE-400"] if status == ToolStatus.VULNERABLE.value else "",
             evidence=evidence_list,
             started_at=started_at,
             ended_at=utc_now_iso(),
