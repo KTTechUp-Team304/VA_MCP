@@ -24,7 +24,7 @@ class StackTraceExposureTool(BaseTool):
                 severity=Severity.INFO.value, confidence=Confidence.LOW.value,
                 title="입력 오류", description="테스트할 payloads 리스트가 비어있습니다.",
                 started_at=started_at, ended_at=ended_at,
-                errors=[build_tool_error(error_code=ErrorCode.VALIDATION_ERROR, error_message="Empty payloads list", retryable=False)]
+                errors=[build_tool_error(error_code=ErrorCode.INVALID_INPUT, error_message="Empty payloads list", retryable=False)]
             )
 
         target_url = f"{tool_input.target.base_url}{tool_input.request.path if tool_input.request else '/'}"
