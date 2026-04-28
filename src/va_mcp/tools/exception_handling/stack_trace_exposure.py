@@ -1,20 +1,8 @@
-from va_mcp.core import (
-    BaseTool,
-    ToolInput,
-    ToolResult,
-    Evidence,
-    ToolError,
-    ToolStatus,
-    Severity,
-    Confidence,
-    ErrorCode,
-)
-from va_mcp.core.utils import (
-    build_tool_error,
-    utc_now_iso,
-    mask_sensitive,
-    sanitize_response_sample,
-)
+import requests
+from va_mcp.core.base import BaseTool
+from va_mcp.core.constants import Confidence, ErrorCode, Severity, ToolStatus
+from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
+from va_mcp.core.utils import build_tool_error, utc_now_iso, mask_sensitive, sanitize_response_sample
 
 class StackTraceExposureTool(BaseTool):
     tool_id = "stack_trace_exposure"
@@ -22,85 +10,75 @@ class StackTraceExposureTool(BaseTool):
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         started_at = utc_now_iso()
+        
+        # schemas.py 옵션 적용 (수정 3)
+        timeout_sec = tool_input.options.timeout / 1000.0
+        max_req = tool_input.options.max_requests
+        payloads = tool_input.options.extra.get("payloads", ["'", "\"", "@@", "1/0", "<script>"])
 
-        # extra 옵션에서 테스트할 악의적 페이로드 가져오기 (기본값 세팅)
-        # 예: 고의적인 타입 에러, 구문 에러, 길이 초과 등을 유발
-        payloads = tool_input.options.extra.get(
-            "payloads", ["'", "\"", "%00", "A" * 5000, "{\"malformed_json:"]
-        )
-
-        try:
-            # TODO: 실제 HTTP 요청 로직 (requests, httpx 등)이 들어갈 자리
-            # 현재는 MVP 단계의 Mock 데이터로 분석 로직을 대체합니다.
-            
-            # (가상) 응답 결과에 스택 트레이스 키워드가 포함되었는지 확인
-            # 실제 구현에서는 payloads를 순회하며 응답 바디를 검사해야 합니다.
-            mock_response_status = 500
-            mock_response_body = "java.lang.NullPointerException\n\tat com.example.api.UserController..."
-            
-            error_keywords = ["Exception", "Traceback", "stack trace", "java.lang.", "Fatal error"]
-            
-            is_vulnerable = any(keyword in mock_response_body for keyword in error_keywords)
-
-            if is_vulnerable:
-                ended_at = utc_now_iso()
-                return ToolResult(
-                    tool_id=self.tool_id,
-                    tool_name=self.tool_name,
-                    status=ToolStatus.VULNERABLE,
-                    severity=Severity.HIGH,      # 내부 구조 노출은 위험도가 높음
-                    confidence=Confidence.HIGH,  # 명확한 키워드 탐지
-                    title="스택 트레이스 노출 취약점 발견",
-                    description="서버 내부 오류 메시지와 스택 트레이스가 클라이언트에게 노출되고 있습니다.",
-                    owasp=["A05 Security Misconfiguration"],
-                    cwe=["CWE-209"], # Information Exposure Through an Error Message
-                    evidence=[
-                        Evidence(
-                            request={
-                                "method": tool_input.request.method if tool_input.request else "GET",
-                                "path": tool_input.request.path if tool_input.request else "/",
-                                # 헤더 마스킹 필수
-                                "headers": mask_sensitive({"Authorization": "Bearer TEST_TOKEN", "Content-Type": "application/json"}),
-                                "body": payloads[0] # 에러를 유발한 페이로드 샘플
-                            },
-                            response_status=mock_response_status,
-                            response_headers={},
-                            # 응답 바디 길이 2000자 제한 필수
-                            response_body_sample=sanitize_response_sample(mock_response_body),
-                            note="의도적인 예외 유발 페이로드 전송 시 스택 트레이스 문자열 노출됨"
-                        )
-                    ],
-                    recommendation="운영 환경(Production)에서는 사용자에게 포괄적인 에러 메시지(예: '서버 내부 오류가 발생했습니다')만 노출하고, 상세 스택 트레이스는 서버 내부 로그로만 기록되도록 예외 처리기(Global Exception Handler)를 설정해야 합니다.",
-                    started_at=started_at,
-                    ended_at=ended_at,
-                )
-
-            # 취약점이 없는 경우 (안전한 예외 처리)
+        # 빈 리스트 예외 처리 (수정 4)
+        if not payloads:
             ended_at = utc_now_iso()
             return ToolResult(
-                tool_id=self.tool_id,
-                tool_name=self.tool_name,
-                status=ToolStatus.PASSED,
-                severity=Severity.INFO,
-                confidence=Confidence.HIGH,
-                title="스택 트레이스 노출 없음",
-                description="비정상적인 입력에도 서버가 안전한 형태의 에러 응답을 반환합니다.",
-                started_at=started_at,
-                ended_at=ended_at,
+                tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value, confidence=Confidence.LOW.value,
+                title="입력 오류", description="테스트할 payloads 리스트가 비어있습니다.",
+                started_at=started_at, ended_at=ended_at,
+                errors=[build_tool_error(error_code=ErrorCode.VALIDATION_ERROR, error_message="Empty payloads list", retryable=False)]
+            )
+
+        target_url = f"{tool_input.target.base_url}{tool_input.request.path if tool_input.request else '/'}"
+        method = tool_input.request.method if tool_input.request else "GET"
+        headers = tool_input.request.headers if tool_input.request else {}
+        
+        error_keywords = ["Exception", "Traceback", "Error:", "java.lang.", "Stack trace:"]
+        vulnerable_evidence = []
+
+        try:
+            # 실제 HTTP 요청 로직 (수정 5) - 최대 요청 횟수 제한 적용
+            for payload in payloads[:max_req]:
+                params = {"q": payload} # 테스트용 파라미터 삽입
+                
+                response = requests.request(method=method, url=target_url, headers=headers, params=params, timeout=timeout_sec, verify=False)
+                response_body = response.text
+
+                if any(keyword.lower() in response_body.lower() for keyword in error_keywords):
+                    vulnerable_evidence.append(
+                        Evidence(
+                            request={"method": method, "path": response.request.url, "headers": mask_sensitive(headers)},
+                            response_status=response.status_code,
+                            response_headers=dict(response.headers),
+                            response_body_sample=sanitize_response_sample(response_body),
+                            note=f"페이로드 '{payload}' 전송 시 내부 에러 정보 노출됨"
+                        )
+                    )
+                    break # 하나라도 발견되면 즉시 취약으로 간주
+
+            ended_at = utc_now_iso()
+            if vulnerable_evidence:
+                return ToolResult(
+                    tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.VULNERABLE.value,
+                    severity=Severity.HIGH.value, confidence=Confidence.HIGH.value,
+                    title="스택 트레이스 노출 취약점 발견", description="서버 오류 발생 시 내부 시스템 경로 및 스택 트레이스가 노출됩니다.",
+                    owasp=["A10:2025 Mishandling of Exceptional Conditions"], # 연도 표기 수정 (수정 1)
+                    cwe=["CWE-209"],
+                    evidence=vulnerable_evidence, recommendation="글로벌 예외 처리기를 통해 사용자에게는 일반적인 에러 메시지만 노출해야 합니다.",
+                    started_at=started_at, ended_at=ended_at
+                )
+
+            return ToolResult(
+                tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.PASSED.value,
+                severity=Severity.INFO.value, confidence=Confidence.HIGH.value,
+                title="스택 트레이스 안전", description="의도적인 에러 유발 시에도 내부 정보가 노출되지 않습니다.",
+                started_at=started_at, ended_at=ended_at
             )
 
         except Exception as e:
-            # 실행 중 예외 처리 규칙: status=ERROR, severity=INFO 고정
             ended_at = utc_now_iso()
             return ToolResult(
-                tool_id=self.tool_id,
-                tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
-                title="도구 실행 오류",
-                description="스택 트레이스 점검 중 내부 오류가 발생했습니다.",
-                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR, str(e))],
-                started_at=started_at,
-                ended_at=ended_at,
+                tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value, confidence=Confidence.LOW.value,
+                title="도구 실행 오류", description="점검 중 내부 통신 오류가 발생했습니다.",
+                errors=[build_tool_error(error_code=ErrorCode.INTERNAL_ERROR, error_message=str(e), retryable=False)],
+                started_at=started_at, ended_at=ended_at
             )
