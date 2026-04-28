@@ -11,9 +11,19 @@ class ErrorCodeConsistencyTool(BaseTool):
     def run(self, tool_input: ToolInput) -> ToolResult:
         started_at = utc_now_iso()
         
+        if tool_input.request is None:
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                evidence=[],  # SKIPPED 규정 준수
+                started_at=started_at,
+                ended_at=utc_now_iso()
+            )
+
         timeout_sec = tool_input.options.timeout / 1000.0
         base_url = tool_input.target.base_url
-        headers = tool_input.request.headers if tool_input.request else {}
+        headers = dict(tool_input.request.headers)
         
         try:
             # 테스트 1: 400 Bad Request 유발 (비정상 메소드 또는 경로)

@@ -10,6 +10,16 @@ class StackTraceExposureTool(BaseTool):
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         started_at = utc_now_iso()
+
+        if tool_input.request is None:
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                evidence=[],  # SKIPPED 규정 준수
+                started_at=started_at,
+                ended_at=utc_now_iso()
+            )
         
         # schemas.py 옵션 적용 (수정 3)
         timeout_sec = tool_input.options.timeout / 1000.0
@@ -29,7 +39,7 @@ class StackTraceExposureTool(BaseTool):
 
         target_url = f"{tool_input.target.base_url}{tool_input.request.path if tool_input.request else '/'}"
         method = tool_input.request.method if tool_input.request else "GET"
-        headers = tool_input.request.headers if tool_input.request else {}
+        headers = dict(tool_input.request.headers)
         
         error_keywords = ["Exception", "Traceback", "Error:", "java.lang.", "Stack trace:"]
         vulnerable_evidence = []

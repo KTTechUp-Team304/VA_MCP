@@ -35,14 +35,14 @@ class TimeoutHandlingTool(BaseTool):
         target = tool_input.target
         request_info = tool_input.request
         
-        if not request_info:
+        if tool_input.request is None:
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
                 status=ToolStatus.SKIPPED.value,
+                evidence=[],  # SKIPPED 규정 준수
                 started_at=started_at,
-                ended_at=utc_now_iso(),
-                evidence=[]  # SKIPPED 시 반드시 빈 리스트
+                ended_at=utc_now_iso()
             )
 
         # 🎯 불법 파라미터(delay_seconds) 삭제 및 표준 timeout 옵션 사용
