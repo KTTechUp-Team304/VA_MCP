@@ -5,6 +5,11 @@ from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
 from va_mcp.core.utils import build_tool_error, utc_now_iso, mask_sensitive, sanitize_response_sample
 
 class MalformedInputTool(BaseTool):
+    """
+    잘못된 데이터를 보냈을 때의 서버의 대처를 파악하는 도구입니다.
+    깔끔하게 튕겨내지 못하고 서버가 죽어버린다면(>=500) 취약 판정을 내립니다.
+    """
+    
     tool_id = "malformed_input"
     tool_name = "Malformed Input Testing"
 

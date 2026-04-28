@@ -5,6 +5,11 @@ from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
 from va_mcp.core.utils import build_tool_error, utc_now_iso, mask_sensitive, sanitize_response_sample
 
 class StackTraceExposureTool(BaseTool):
+    """
+    에러 발생 시 서버의 내부 정보(코드 경로, 프레임워크 종류 등)이 노출되는지 점검하는 도구입니다.
+    서버 응답 안에 위험한 단어들이 포함되어 있는지 검사합니다.
+    """
+    
     tool_id = "stack_trace_exposure"
     tool_name = "Stack Trace Exposure Testing"
 

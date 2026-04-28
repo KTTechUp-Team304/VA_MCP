@@ -5,6 +5,11 @@ from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
 from va_mcp.core.utils import build_tool_error, utc_now_iso, mask_sensitive, sanitize_response_sample
 
 class ErrorCodeConsistencyTool(BaseTool):
+    """
+    어떤 종류의 에러(400, 404, 500 등)든 상관없이 항상 똑같은 형식으로 응답하는지 확인하는 도구입니다.
+    응답의 형식(Content-Type이나 스키마 등)이 다르다면 취약 판정을 내립니다.
+    """
+
     tool_id = "error_code_consistency"
     tool_name = "Error Code Consistency Testing"
 

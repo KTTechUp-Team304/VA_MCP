@@ -5,6 +5,11 @@ from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
 from va_mcp.core.utils import build_tool_error, utc_now_iso, mask_sensitive, sanitize_response_sample
 
 class RetryHandlingTool(BaseTool):
+    """
+    단기간에 수많은 요청을 보낼 때, 서버가 속도 제한(Rate Limit)을 걸어 방어하는지 확인하는 도구입니다.(브루트포스 방어)
+    모든 응답이 200(성공)이라면 방어 조치가 없다고 판단, 취약 판정을 내립니다.
+    """
+
     tool_id = "retry_handling"
     tool_name = "Retry Handling Testing"
 
