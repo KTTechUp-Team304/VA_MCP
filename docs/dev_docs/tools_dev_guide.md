@@ -34,6 +34,9 @@ tests/
 
 ## 2. 필수 import 경로
 
+`va_mcp.core` 패키지가 하위 모듈 전체를 re-export하므로, 아래처럼 단일 경로에서 임포트한다.
+하위 모듈(base, constants, schemas)을 직접 임포트하지 않는다.
+
 ```python
 from va_mcp.core import (
     BaseTool,
@@ -41,6 +44,7 @@ from va_mcp.core import (
     ToolResult,
     Evidence,
     ToolError,
+    AuthContext,
     ToolStatus,
     Severity,
     Confidence,
@@ -54,6 +58,8 @@ from va_mcp.core.utils import (
     sanitize_request_body,
 )
 ```
+
+주의: `va_mcp.core.utils`는 `__init__.py`에서 re-export하지 않으므로 직접 임포트한다.
 
 ---
 
@@ -161,10 +167,20 @@ def run(self, tool_input: ToolInput) -> ToolResult:
 
 ```text
 status=VULNERABLE  → severity와 confidence를 분석 결과에 맞게 설정
-status=PASSED      → severity=INFO, confidence는 자유
+status=PASSED      → severity는 결과에 따라 선택 (아래 기준 참고), confidence는 자유
 status=SKIPPED     → evidence=[] 고정
-status=ERROR       → severity=INFO, confidence=LOW 고정
+status=ERROR       → severity=INFO, confidence=LOW 고정  ← ERROR만 엄격히 고정
 ```
+
+PASSED severity 기준:
+```text
+취약점이 전혀 없음 (완전 정상)    → severity=INFO
+주의가 필요한 설정이 있음         → severity=LOW   (예: OPTIONS 헤더에 위험 메서드 노출)
+명백한 문제이나 직접 취약점은 아님 → severity=MEDIUM
+```
+
+주의: severity=INFO 강제는 ERROR 상태에만 적용된다. PASSED를 INFO로 고정하면
+      "주의 필요" 수준의 결과를 전달할 방법이 없어진다.
 
 ### 6.2 Evidence 작성 규칙
 
@@ -172,7 +188,7 @@ status=ERROR       → severity=INFO, confidence=LOW 고정
 Evidence(
     request={
         "method": "GET",
-        "path": "/api/users/2",
+        "url": "https://api.example.com/api/users/2",         # path 아닌 전체 URL 기록 (재현 가능성)
         "headers": mask_sensitive(request_headers),           # 민감 키 마스킹 필수
         "body": sanitize_request_body(request_body),          # 2000자 제한
     },
@@ -283,7 +299,15 @@ def test_error():
 ## 8. tool 구현 예시 (IDOR)
 
 ```python
-from va_mcp.core import BaseTool, Confidence, Evidence, Severity, ToolInput, ToolResult, ToolStatus
+from va_mcp.core import (
+    BaseTool,
+    Confidence,
+    Evidence,
+    Severity,
+    ToolInput,
+    ToolResult,
+    ToolStatus,
+)
 from va_mcp.core.utils import mask_sensitive, sanitize_response_sample, utc_now_iso
 
 
@@ -313,7 +337,7 @@ class IdorBolaTool(BaseTool):
                     Evidence(
                         request={
                             "method": "GET",
-                            "path": "/api/users/2",
+                            "url": "https://api.example.com/api/users/2",
                             "headers": mask_sensitive({"Authorization": "Bearer TOKEN_A"}),
                         },
                         response_status=200,
