@@ -27,7 +27,7 @@ class MalformedInputTool(BaseTool):
 
         target_url = f"{tool_input.target.base_url}{tool_input.request.path if tool_input.request else '/'}"
         method = tool_input.request.method if tool_input.request else "POST"
-        headers = tool_input.request.headers if tool_input.request else {}
+        headers = dict(tool_input.request.headers) if tool_input.request else {}
         headers.setdefault("Content-Type", "application/json")
         
         vulnerable_evidence = []
