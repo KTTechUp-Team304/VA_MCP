@@ -96,6 +96,27 @@ class RateLimitCheckTool(BaseTool):
             # max_requests 제한 적용
             actual_count = min(repeat_count, tool_input.options.max_requests)
 
+            if actual_count < 1:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.ERROR,
+                    severity=Severity.INFO,
+                    confidence=Confidence.LOW,
+                    title="입력값 오류",
+                    description="max_requests 또는 repeat_count가 1 미만이어서 검사를 수행할 수 없습니다.",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    errors=[
+                        build_tool_error(
+                            error_code=ErrorCode.INVALID_INPUT,
+                            error_message=f"actual_count가 0 이하입니다: repeat_count={repeat_count}, max_requests={tool_input.options.max_requests}",
+                            retryable=False,
+                        )
+                    ],
+                )
+
             # ── URL 조립 ──
             base_url = tool_input.target.base_url.rstrip("/")
             path = tool_input.request.path
