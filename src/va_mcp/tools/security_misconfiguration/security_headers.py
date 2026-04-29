@@ -113,7 +113,7 @@ class SecurityHeadersTool(BaseTool):
                         f"응답에서 {len(missing_headers)}개의 보안 헤더가 누락되었습니다: "
                         f"{', '.join(missing_headers)}"
                     ),
-                    owasp=["A05:2021 Security Misconfiguration"],
+                    owasp=["A02:2025 Security Misconfiguration"],
                     cwe=["CWE-16"],
                     evidence=evidence,
                     recommendation=(
