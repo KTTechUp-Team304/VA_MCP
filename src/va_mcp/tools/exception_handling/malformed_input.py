@@ -1,15 +1,36 @@
+from __future__ import annotations
+
+# extra 옵션 키:
+#   "payloads": list[str] — 비정상 입력으로 사용할 페이로드 목록
+#                           (기본값: ["{malformed: json", "A" * 5000, "null", "<xml>"])
+
 import requests
-from va_mcp.core.base import BaseTool
-from va_mcp.core.constants import Confidence, ErrorCode, Severity, ToolStatus
-from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
-from va_mcp.core.utils import build_tool_error, utc_now_iso, mask_sensitive, sanitize_response_sample
+
+from va_mcp.core import (
+    BaseTool,
+    Confidence,
+    ErrorCode,
+    Evidence,
+    Severity,
+    ToolInput,
+    ToolResult,
+    ToolStatus,
+)
+from va_mcp.core.utils import (
+    build_tool_error,
+    mask_sensitive,
+    sanitize_request_body,
+    sanitize_response_sample,
+    utc_now_iso,
+)
+
 
 class MalformedInputTool(BaseTool):
     """
     잘못된 데이터를 보냈을 때의 서버의 대처를 파악하는 도구입니다.
     깔끔하게 튕겨내지 못하고 서버가 죽어버린다면(>=500) 취약 판정을 내립니다.
     """
-    
+
     tool_id = "malformed_input"
     tool_name = "Malformed Input Testing"
 
@@ -17,49 +38,78 @@ class MalformedInputTool(BaseTool):
         started_at = utc_now_iso()
 
         if tool_input.request is None:
+            ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.SKIPPED.value,
-                evidence=[],  # SKIPPED 규정 준수
+                status=ToolStatus.SKIPPED,
+                severity=Severity.INFO,
+                confidence=Confidence.LOW,
+                title="요청 정보 없음",
+                description="request가 제공되지 않아 점검을 건너뜁니다.",
+                evidence=[],
                 started_at=started_at,
-                ended_at=utc_now_iso()
+                ended_at=ended_at,
             )
-        
+
         timeout_sec = tool_input.options.timeout / 1000.0
         max_req = tool_input.options.max_requests
-        payloads = tool_input.options.extra.get("payloads", ["{malformed: json", "A" * 5000, "null", "<xml>"])
+        payloads = tool_input.options.extra.get(
+            "payloads", ["{malformed: json", "A" * 5000, "null", "<xml>"]
+        )
 
         if not payloads:
             ended_at = utc_now_iso()
             return ToolResult(
-                tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.ERROR.value,
-                severity=Severity.INFO.value, confidence=Confidence.LOW.value,
-                title="입력 오류", description="테스트할 payloads 리스트가 비어있습니다.",
-                started_at=started_at, ended_at=ended_at,
-                errors=[build_tool_error(error_code=ErrorCode.INVALID_INPUT, error_message="Empty payloads list", retryable=False)]
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.ERROR,
+                severity=Severity.INFO,
+                confidence=Confidence.LOW,
+                title="입력 오류",
+                description="테스트할 payloads 리스트가 비어있습니다.",
+                started_at=started_at,
+                ended_at=ended_at,
+                errors=[
+                    build_tool_error(
+                        error_code=ErrorCode.INVALID_INPUT,
+                        error_message="Empty payloads list",
+                        retryable=False,
+                    )
+                ],
             )
 
-        target_url = f"{tool_input.target.base_url}{tool_input.request.path if tool_input.request else '/'}"
-        method = tool_input.request.method if tool_input.request else "POST"
+        target_url = f"{tool_input.target.base_url}{tool_input.request.path}"
+        method = tool_input.request.method
         headers = dict(tool_input.request.headers)
         headers.setdefault("Content-Type", "application/json")
-        
+
         vulnerable_evidence = []
 
         try:
             for payload in payloads[:max_req]:
-                response = requests.request(method=method, url=target_url, headers=headers, data=payload, timeout=timeout_sec, verify=False)
-                
-                # 비정상 입력을 500 계열 에러로 뱉으면 취약
+                response = requests.request(
+                    method=method,
+                    url=target_url,
+                    headers=headers,
+                    data=payload,
+                    timeout=timeout_sec,
+                    verify=False,
+                )
+
                 if response.status_code >= 500:
                     vulnerable_evidence.append(
                         Evidence(
-                            request={"method": method, "path": target_url, "headers": mask_sensitive(headers), "body": payload[:100]},
+                            request={
+                                "method": method,
+                                "url": target_url,
+                                "headers": mask_sensitive(headers),
+                                "body": sanitize_request_body(payload),
+                            },
                             response_status=response.status_code,
                             response_headers=dict(response.headers),
                             response_body_sample=sanitize_response_sample(response.text),
-                            note="형식에 맞지 않는 입력에 대해 5xx 에러(예외 처리 실패)를 반환함"
+                            note="형식에 맞지 않는 입력에 대해 5xx 에러(예외 처리 실패)를 반환함",
                         )
                     )
                     break
@@ -67,28 +117,50 @@ class MalformedInputTool(BaseTool):
             ended_at = utc_now_iso()
             if vulnerable_evidence:
                 return ToolResult(
-                    tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.VULNERABLE.value,
-                    severity=Severity.MEDIUM.value, confidence=Confidence.HIGH.value,
-                    title="비정상 입력 처리 취약점 발견", description="형식에 맞지 않는 입력값을 안전하게 거부(400)하지 못하고 내부 에러가 발생합니다.",
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.VULNERABLE,
+                    severity=Severity.MEDIUM,
+                    confidence=Confidence.HIGH,
+                    title="비정상 입력 처리 취약점 발견",
+                    description="형식에 맞지 않는 입력값을 안전하게 거부(400)하지 못하고 내부 에러가 발생합니다.",
                     owasp=["A10:2025 Mishandling of Exceptional Conditions"],
-                    cwe=["CWE-20"], evidence=vulnerable_evidence,
+                    cwe=["CWE-20"],
+                    evidence=vulnerable_evidence,
                     recommendation="강력한 입력값 검증(Input Validation)을 구현하여 400 Bad Request를 반환하도록 처리하세요.",
-                    started_at=started_at, ended_at=ended_at
+                    started_at=started_at,
+                    ended_at=ended_at,
                 )
 
             return ToolResult(
-                tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.PASSED.value,
-                severity=Severity.INFO.value, confidence=Confidence.HIGH.value,
-                title="비정상 입력 방어 확인", description="서버가 비정상적인 입력값을 올바르게 식별하고 처리합니다.",
-                started_at=started_at, ended_at=ended_at
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.PASSED,
+                severity=Severity.INFO,
+                confidence=Confidence.HIGH,
+                title="비정상 입력 방어 확인",
+                description="서버가 비정상적인 입력값을 올바르게 식별하고 처리합니다.",
+                started_at=started_at,
+                ended_at=ended_at,
             )
 
         except Exception as e:
             ended_at = utc_now_iso()
             return ToolResult(
-                tool_id=self.tool_id, tool_name=self.tool_name, status=ToolStatus.ERROR.value,
-                severity=Severity.INFO.value, confidence=Confidence.LOW.value,
-                title="도구 실행 오류", description="점검 중 내부 통신 오류가 발생했습니다.",
-                errors=[build_tool_error(error_code=ErrorCode.INTERNAL_ERROR, error_message=str(e), retryable=False)],
-                started_at=started_at, ended_at=ended_at
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.ERROR,
+                severity=Severity.INFO,
+                confidence=Confidence.LOW,
+                title="도구 실행 오류",
+                description="점검 중 내부 통신 오류가 발생했습니다.",
+                errors=[
+                    build_tool_error(
+                        error_code=ErrorCode.INTERNAL_ERROR,
+                        error_message=str(e),
+                        retryable=False,
+                    )
+                ],
+                started_at=started_at,
+                ended_at=ended_at,
             )
