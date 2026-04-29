@@ -133,6 +133,7 @@ class TimeoutHandlingTool(BaseTool):
             description="인위적인 지연 요청 시 서버가 내부 오류를 일으키거나 응답을 무한 대기하여 가용성에 영향을 줄 수 있음" if status == ToolStatus.VULNERABLE.value else "지연 요청 시에도 서버에 영향이 가지 않음을 확인하였음(정상)",
             owasp=["A10:2025 Mishandling of Exceptional Conditions"],
             cwe=["CWE-770"],
+            recommendation="글로벌 타임아웃 적용 및 자원 점유 방지 조치가 필요합니다." if status == ToolStatus.VULNERABLE.value else "조치가 필요하지 않습니다.",
             evidence=evidence_list,
             started_at=started_at,
             ended_at=utc_now_iso(),
