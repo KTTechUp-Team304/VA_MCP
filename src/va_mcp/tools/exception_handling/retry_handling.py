@@ -35,6 +35,10 @@ class RetryHandlingTool(BaseTool):
         
         responses: list[requests.Response] = []
         try:
+            # max_req의 최솟값은 0보다 커야 함
+            if max_req <= 0:
+                raise ValueError("max_requests 입력값은 0보다 커야 합니다!")
+            
             # 연속 요청 발송
             for _ in range(max_req):
                 res = requests.request(
