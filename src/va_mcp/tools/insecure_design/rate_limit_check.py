@@ -67,6 +67,21 @@ class RateLimitCheckTool(BaseTool):
                     ended_at=ended_at,
                 )
 
+            # ── safe_mode 체크 ──
+            if tool_input.options.safe_mode:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED,
+                    severity=Severity.INFO,
+                    confidence=Confidence.LOW,
+                    title="Safe Mode 활성화",
+                    description="safe_mode=True 상태에서는 반복 요청을 전송하지 않습니다.",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                )
+
             # ── extra 옵션 추출 ──
             repeat_count = tool_input.options.extra.get("repeat_count", 10)
             interval_ms = tool_input.options.extra.get("interval_ms", 0)

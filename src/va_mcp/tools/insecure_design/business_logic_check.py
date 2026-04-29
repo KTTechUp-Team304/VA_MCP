@@ -80,6 +80,21 @@ class BusinessLogicCheckTool(BaseTool):
                     ended_at=ended_at,
                 )
 
+            # ── safe_mode 체크 ──
+            if tool_input.options.safe_mode:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED,
+                    severity=Severity.INFO,
+                    confidence=Confidence.LOW,
+                    title="Safe Mode 활성화",
+                    description="safe_mode=True 상태에서는 비정상 값 전송을 수행하지 않습니다.",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                )
+
             # ── extra 옵션 추출 ──
             test_field = tool_input.options.extra.get("test_field", "amount")
             invalid_values = tool_input.options.extra.get("invalid_values", [-1, 0, -9999])
