@@ -4,7 +4,7 @@ Resource Exhaustion Check Tool
 비정상적으로 큰 입력값을 전송하여
 서버가 요청 크기를 제한하고 있는지 확인한다.
 
-OWASP: A04 Insecure Design
+OWASP: A06 Insecure Design
 CWE:   CWE-400 (Uncontrolled Resource Consumption)
 
 extra 옵션:
@@ -186,7 +186,7 @@ class ResourceExhaustionTool(BaseTool):
                         f"{payload_size}자 크기의 페이로드 전송 시 413 응답을 수신하였습니다. "
                         f"서버에 요청 크기 제한이 적용되어 있습니다."
                     ),
-                    owasp=["A04 Insecure Design"],
+                    owasp=["A06 Insecure Design"],
                     cwe=["CWE-400"],
                     evidence=[evidence],
                     recommendation="현재 요청 크기 제한이 적용되어 있습니다. 주기적으로 임계값의 적절성을 검토하세요.",
@@ -211,7 +211,7 @@ class ResourceExhaustionTool(BaseTool):
                         f"{payload_size}자 크기의 페이로드 전송 시 {resp.status_code} 오류가 발생했습니다. "
                         f"서버가 대형 요청을 적절히 처리하지 못하고 있습니다."
                     ),
-                    owasp=["A04 Insecure Design"],
+                    owasp=["A06 Insecure Design"],
                     cwe=["CWE-400"],
                     evidence=[evidence],
                     recommendation=(
@@ -239,7 +239,7 @@ class ResourceExhaustionTool(BaseTool):
                     f"{payload_size}자 크기의 대형 페이로드가 거부되지 않고 처리되었습니다. "
                     f"서버에 요청 크기 제한이 설정되지 않았을 가능성이 있습니다."
                 ),
-                owasp=["A04 Insecure Design"],
+                owasp=["A06 Insecure Design"],
                 cwe=["CWE-400"],
                 evidence=[evidence],
                 recommendation=(
@@ -263,7 +263,7 @@ class ResourceExhaustionTool(BaseTool):
                     "대형 페이로드 전송 시 서버가 시간 내에 응답하지 못했습니다. "
                     "리소스 고갈 공격에 취약할 가능성이 있습니다."
                 ),
-                owasp=["A04 Insecure Design"],
+                owasp=["A06 Insecure Design"],
                 cwe=["CWE-400"],
                 evidence=[
                     Evidence(

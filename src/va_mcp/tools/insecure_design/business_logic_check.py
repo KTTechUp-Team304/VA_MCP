@@ -4,7 +4,7 @@ Business Logic Check Tool
 지정 필드에 비정상 값(음수, 0, 극단값 등)을 전송하여
 서버가 비즈니스 로직 수준의 값 검증을 수행하는지 확인한다.
 
-OWASP: A06:2025 Insecure Design
+OWASP: A06 Insecure Design
 CWE:   CWE-840 (Business Logic Errors)
 
 extra 옵션:
@@ -63,7 +63,7 @@ class BusinessLogicCheckTool(BaseTool):
                     title="요청 정보 없음",
                     description="request가 제공되지 않아 검사를 수행할 수 없습니다.",
                     started_at=started_at,
-                    ended_at=utc_now_iso(),
+                    ended_at=ended_at,
                 )
 
             if tool_input.request.method.upper() not in ("POST", "PUT", "PATCH"):
@@ -77,7 +77,7 @@ class BusinessLogicCheckTool(BaseTool):
                     title="검사 대상 아님",
                     description="Business Logic Check는 POST, PUT, PATCH 메서드에만 적용됩니다.",
                     started_at=started_at,
-                    ended_at=utc_now_iso(),
+                    ended_at=ended_at,
                 )
 
             # ── extra 옵션 추출 ──
@@ -95,7 +95,7 @@ class BusinessLogicCheckTool(BaseTool):
                     title="입력값 오류",
                     description="invalid_values는 1개 이상의 값을 포함하는 리스트여야 합니다.",
                     started_at=started_at,
-                    ended_at=utc_now_iso(),
+                    ended_at=ended_at,
                     errors=[
                         build_tool_error(
                             error_code=ErrorCode.INVALID_INPUT,
@@ -116,7 +116,7 @@ class BusinessLogicCheckTool(BaseTool):
                     title="입력값 오류",
                     description="test_field는 비어 있지 않은 문자열이어야 합니다.",
                     started_at=started_at,
-                    ended_at=utc_now_iso(),
+                    ended_at=ended_at,
                     errors=[
                         build_tool_error(
                             error_code=ErrorCode.INVALID_INPUT,
@@ -183,7 +183,6 @@ class BusinessLogicCheckTool(BaseTool):
 
             # ── 결과 판정 ──
             if accepted_evidences:
-                # 비정상 값이 수락된 케이스 존재 → VULNERABLE
                 ended_at = utc_now_iso()
                 return ToolResult(
                     tool_id=self.tool_id,
@@ -197,7 +196,7 @@ class BusinessLogicCheckTool(BaseTool):
                         f"({len(accepted_evidences)}/{len(invalid_values)}건 수락) "
                         f"비즈니스 로직 수준의 값 검증이 부재하거나 불완전합니다."
                     ),
-                    owasp=["A06:2025 Insecure Design"],
+                    owasp=["A06 Insecure Design"],
                     cwe=["CWE-840"],
                     evidence=accepted_evidences,
                     recommendation=(
@@ -209,7 +208,6 @@ class BusinessLogicCheckTool(BaseTool):
                     ended_at=ended_at,
                 )
 
-            # 모두 거부 → PASSED
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
@@ -223,7 +221,7 @@ class BusinessLogicCheckTool(BaseTool):
                     f"모든 요청({len(invalid_values)}건)이 400/422로 거부되었습니다. "
                     f"서버에 비즈니스 로직 값 검증이 적용되어 있습니다."
                 ),
-                owasp=["A06:2025 Insecure Design"],
+                owasp=["A06 Insecure Design"],
                 cwe=["CWE-840"],
                 evidence=rejected_evidences,
                 recommendation="현재 값 검증이 적용되어 있습니다. 검증 범위와 오류 메시지 노출 수준을 주기적으로 검토하세요.",

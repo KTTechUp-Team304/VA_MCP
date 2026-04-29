@@ -4,7 +4,7 @@ Rate Limit Check Tool
 대상 엔드포인트에 동일 요청을 반복 전송하여
 API Rate Limit(요청 제한) 존재 여부를 확인한다.
 
-OWASP: A04 Insecure Design
+OWASP: A06 Insecure Design
 CWE:   CWE-770 (Allocation of Resources Without Limits or Throttling)
 
 extra 옵션:
@@ -165,7 +165,7 @@ class RateLimitCheckTool(BaseTool):
                         f"{len(status_codes)}번째 요청에서 429 응답을 수신하였습니다. "
                         f"API에 Rate Limit이 적용되어 있습니다."
                     ),
-                    owasp=["A04 Insecure Design"],
+                    owasp=["A06 Insecure Design"],
                     cwe=["CWE-770"],
                     evidence=[rate_limit_evidence],
                     recommendation="현재 Rate Limit이 적용되어 있습니다. 주기적으로 임계값의 적절성을 검토하세요.",
@@ -202,7 +202,7 @@ class RateLimitCheckTool(BaseTool):
                     f"{actual_count}회 동일 요청을 반복했으나 429 응답이 발생하지 않았습니다. "
                     f"API에 Rate Limit이 설정되지 않았을 가능성이 있습니다."
                 ),
-                owasp=["A04 Insecure Design"],
+                owasp=["A06 Insecure Design"],
                 cwe=["CWE-770"],
                 evidence=[last_resp_evidence],
                 recommendation=(
