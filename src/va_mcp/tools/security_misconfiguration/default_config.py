@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 # extra 옵션 키:
-#   "sensitive_paths": list[str] — 점검할 민감 경로 목록
-#                                  (기본값: DEFAULT_SENSITIVE_PATHS)
+#   "login_path"       : str             — 로그인 엔드포인트 경로 (기본값: DEFAULT_LOGIN_PATH)
+#   "credential_pairs" : list[list[str]] — 테스트할 [username, password] 쌍 목록
+#                                          (기본값: DEFAULT_CREDENTIAL_PAIRS)
+#   "admin_paths"      : list[str]       — 관리 페이지 경로 목록 (기본값: DEFAULT_ADMIN_PATHS)
 
 import requests
 
@@ -24,35 +26,46 @@ from va_mcp.core.utils import (
     utc_now_iso,
 )
 
-DEFAULT_SENSITIVE_PATHS = [
-    "/.env",
-    "/.git/config",
-    "/.git/HEAD",
-    "/backup",
-    "/backup.zip",
-    "/backup.sql",
-    "/config.php",
-    "/wp-config.php",
-    "/.DS_Store",
-    "/database.yml",
-    "/config.yml",
-    "/config.json",
-    "/.htaccess",
-    "/web.config",
-    "/phpinfo.php",
-    "/server-status",
+DEFAULT_LOGIN_PATH = "/login"
+
+DEFAULT_CREDENTIAL_PAIRS = [
+    ["admin", "admin"],
+    ["admin", "password"],
+    ["admin", "123456"],
+    ["root", "root"],
+    ["root", "password"],
+    ["administrator", "administrator"],
+    ["test", "test"],
+    ["guest", "guest"],
 ]
 
+DEFAULT_ADMIN_PATHS = [
+    "/admin",
+    "/admin/login",
+    "/administrator",
+    "/phpmyadmin",
+    "/wp-admin",
+    "/manager",
+    "/console",
+    "/dashboard",
+    "/management",
+    "/control",
+]
 
-class SensitivePathTool(BaseTool):
+_CREDENTIAL_SUCCESS_STATUS = {200, 302}
+_ADMIN_ACCESSIBLE_STATUS = {200}
+_ADMIN_PROTECTED_STATUS = {401, 403}
+
+
+class DefaultConfigTool(BaseTool):
     """
-    서버에 노출된 민감한 경로(설정 파일, 백업, 버전 관리 등)를 탐지하는 도구.
-    .env, .git/config, backup.zip 등 주요 경로에 직접 요청을 보내며,
-    HTTP 200 응답 시 HIGH, HTTP 403 응답 시 경로 존재 가능성으로 MEDIUM을 판정한다.
+    기본 자격증명과 관리 페이지 노출로 기본 설정 취약점을 탐지하는 도구.
+    기본 계정(admin/admin 등)으로 로그인을 시도하고, 관리 페이지 접근 가능 여부를 점검하며,
+    자격증명 성공 시 CRITICAL, 관리 페이지 노출 시 HIGH/MEDIUM으로 판정한다.
     """
 
-    tool_id = "sensitive_path"
-    tool_name = "Sensitive Path Detection"
+    tool_id = "default_config"
+    tool_name = "Default Configuration Vulnerability Detection"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         started_at = utc_now_iso()
@@ -74,11 +87,16 @@ class SensitivePathTool(BaseTool):
 
         timeout_sec = tool_input.options.timeout / 1000.0
         max_req = tool_input.options.max_requests
-        sensitive_paths = tool_input.options.extra.get(
-            "sensitive_paths", list(DEFAULT_SENSITIVE_PATHS)
+        login_path = tool_input.options.extra.get("login_path", DEFAULT_LOGIN_PATH)
+        credential_pairs = tool_input.options.extra.get(
+            "credential_pairs", [list(p) for p in DEFAULT_CREDENTIAL_PAIRS]
+        )
+        admin_paths = tool_input.options.extra.get(
+            "admin_paths", list(DEFAULT_ADMIN_PATHS)
         )
 
         base_url = tool_input.target.base_url
+        login_url = f"{base_url}{login_path}"
         request_headers = dict(tool_input.request.headers)
 
         if tool_input.auth:
@@ -91,9 +109,52 @@ class SensitivePathTool(BaseTool):
                 request_headers["X-API-Key"] = auth.token
 
         try:
-            vulnerable_evidence = []
+            credential_evidence = []
+            admin_accessible_evidence = []
+            admin_protected_evidence = []
+            total_requests = 0
 
-            for path in sensitive_paths[:max_req]:
+            # Phase 1: 기본 자격증명 테스트
+            post_headers = {**request_headers, "Content-Type": "application/json"}
+            for pair in credential_pairs:
+                if total_requests >= max_req:
+                    break
+                username, password = pair[0], pair[1]
+
+                response = requests.post(
+                    url=login_url,
+                    headers=post_headers,
+                    json={"username": username, "password": password},
+                    timeout=timeout_sec,
+                    verify=False,
+                    allow_redirects=False,
+                )
+                total_requests += 1
+
+                if response.status_code in _CREDENTIAL_SUCCESS_STATUS:
+                    credential_evidence.append(
+                        Evidence(
+                            request={
+                                "method": "POST",
+                                "url": login_url,
+                                "headers": mask_sensitive(post_headers),
+                                "body": {"username": username, "password": "***"},
+                            },
+                            response_status=response.status_code,
+                            response_headers=dict(response.headers),
+                            response_body_sample=sanitize_response_sample(response.text),
+                            note=(
+                                f"기본 자격증명 '{username}/***'으로 "
+                                f"로그인 성공 가능성 확인 (HTTP {response.status_code})"
+                            ),
+                        )
+                    )
+                    break
+
+            # Phase 2: 관리 페이지 노출 테스트
+            for path in admin_paths:
+                if total_requests >= max_req:
+                    break
                 target_url = f"{base_url}{path}"
 
                 response = requests.get(
@@ -103,9 +164,10 @@ class SensitivePathTool(BaseTool):
                     verify=False,
                     allow_redirects=False,
                 )
+                total_requests += 1
 
-                if response.status_code == 200:
-                    vulnerable_evidence.append(
+                if response.status_code in _ADMIN_ACCESSIBLE_STATUS:
+                    admin_accessible_evidence.append(
                         Evidence(
                             request={
                                 "method": "GET",
@@ -115,11 +177,11 @@ class SensitivePathTool(BaseTool):
                             response_status=response.status_code,
                             response_headers=dict(response.headers),
                             response_body_sample=sanitize_response_sample(response.text),
-                            note=f"민감 경로 '{path}' 직접 접근 가능 (HTTP 200)",
+                            note=f"관리 페이지 '{path}'가 인증 없이 접근 가능합니다.",
                         )
                     )
-                elif response.status_code == 403:
-                    vulnerable_evidence.append(
+                elif response.status_code in _ADMIN_PROTECTED_STATUS:
+                    admin_protected_evidence.append(
                         Evidence(
                             request={
                                 "method": "GET",
@@ -129,16 +191,41 @@ class SensitivePathTool(BaseTool):
                             response_status=response.status_code,
                             response_headers=dict(response.headers),
                             response_body_sample=sanitize_response_sample(response.text),
-                            note=f"민감 경로 '{path}' 존재 확인 (HTTP 403 - 접근 차단됨)",
+                            note=(
+                                f"관리 페이지 '{path}'가 존재하나 "
+                                f"인증으로 보호됩니다 (HTTP {response.status_code})."
+                            ),
                         )
                     )
 
             ended_at = utc_now_iso()
 
-            if vulnerable_evidence:
-                has_accessible = any(e.response_status == 200 for e in vulnerable_evidence)
-                severity = Severity.HIGH if has_accessible else Severity.MEDIUM
-                confidence = Confidence.HIGH if has_accessible else Confidence.MEDIUM
+            all_evidence = (
+                credential_evidence + admin_accessible_evidence + admin_protected_evidence
+            )
+
+            if all_evidence:
+                if credential_evidence:
+                    severity = Severity.CRITICAL
+                    confidence = Confidence.HIGH
+                    title = "기본 자격증명으로 로그인 가능"
+                    description = "기본 계정/비밀번호로 로그인에 성공하였습니다."
+                elif admin_accessible_evidence:
+                    severity = Severity.HIGH
+                    confidence = Confidence.HIGH
+                    title = "관리 페이지 무단 접근 가능"
+                    description = (
+                        f"{len(admin_accessible_evidence)}개의 관리 페이지가 "
+                        "인증 없이 접근 가능합니다."
+                    )
+                else:
+                    severity = Severity.MEDIUM
+                    confidence = Confidence.MEDIUM
+                    title = "관리 페이지 존재 확인"
+                    description = (
+                        f"{len(admin_protected_evidence)}개의 관리 페이지가 "
+                        "존재하나 인증으로 보호됩니다."
+                    )
 
                 return ToolResult(
                     tool_id=self.tool_id,
@@ -146,14 +233,14 @@ class SensitivePathTool(BaseTool):
                     status=ToolStatus.VULNERABLE,
                     severity=severity,
                     confidence=confidence,
-                    title="민감 경로 노출 발견",
-                    description=f"{len(vulnerable_evidence)}개의 민감 경로가 탐지되었습니다.",
+                    title=title,
+                    description=description,
                     owasp=["A02:2025 Security Misconfiguration"],
-                    cwe=["CWE-538"],
-                    evidence=vulnerable_evidence,
+                    cwe=["CWE-1188"],
+                    evidence=all_evidence,
                     recommendation=(
-                        "민감한 파일과 디렉터리는 웹 루트 외부로 이동하거나 접근을 차단하세요. "
-                        "웹 서버 설정에서 .env, .git 등 숨김 파일 및 백업 파일 접근을 금지하세요."
+                        "기본 자격증명을 즉시 변경하고, 관리 페이지에 강력한 인증을 적용하세요. "
+                        "불필요한 관리 인터페이스는 비활성화하거나 IP 제한을 적용하세요."
                     ),
                     started_at=started_at,
                     ended_at=ended_at,
@@ -165,8 +252,8 @@ class SensitivePathTool(BaseTool):
                 status=ToolStatus.PASSED,
                 severity=Severity.INFO,
                 confidence=Confidence.HIGH,
-                title="민감 경로 미노출",
-                description="점검한 민감 경로에서 외부 접근 가능한 경로가 발견되지 않았습니다.",
+                title="기본 설정 취약점 미발견",
+                description="기본 자격증명 및 관리 페이지 노출이 확인되지 않았습니다.",
                 started_at=started_at,
                 ended_at=ended_at,
             )
