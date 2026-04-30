@@ -103,6 +103,10 @@ class InsecureJwtTool(BaseTool):
                     ended_at=ended_at,
                 )
 
+            # ── Bearer 접두사 제거 ──
+            if token.lower().startswith("bearer "):
+                token = token[7:]
+
             # ── JWT 구조 검증 ──
             parts = token.split(".")
             if len(parts) != 3:

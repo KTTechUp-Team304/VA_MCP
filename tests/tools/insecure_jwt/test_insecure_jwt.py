@@ -69,6 +69,13 @@ def test_skipped_no_token():
     assert result.evidence == []
 
 
+def test_bearer_prefix_stripped():
+    """token에 'Bearer ' 접두사가 있어도 정상적으로 분석한다."""
+    raw_token = make_jwt({"alg": "RS256", "typ": "JWT"}, {"sub": "1234", "exp": 9999999999})
+    result = InsecureJwtTool().run(make_tool_input(token=f"Bearer {raw_token}"))
+    assert result.status == "passed"
+
+
 def test_error_invalid_jwt_format():
     """3-part 형식이 아닌 토큰은 ERROR + errors를 반환한다."""
     result = InsecureJwtTool().run(make_tool_input(token="notajwt"))
