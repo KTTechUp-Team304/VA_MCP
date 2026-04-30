@@ -229,6 +229,8 @@ class InsecureJwtTool(BaseTool):
                 )
 
             # ── Evidence 생성 ──
+            # HTTP 요청/응답이 없는 정적 분석 도구이므로 response_status=0,
+            # response_headers={}, response_body_sample=""은 의도된 빈 값임.
             evidence = Evidence(
                 request={
                     "token_header": header,
@@ -240,14 +242,13 @@ class InsecureJwtTool(BaseTool):
                 response_status=0,
                 response_headers={},
                 response_body_sample="",
-                note="JWT 정적 분석 결과",
+                note="JWT 정적 분석 결과 (HTTP 요청/응답 없음)",
             )
-
-            ended_at = utc_now_iso()
 
             if issues:
                 evidence.note = " | ".join(issues)
                 severity = Severity.HIGH if (not alg or is_none_alg or bool(sensitive_found)) else Severity.MEDIUM
+                ended_at = utc_now_iso()
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
@@ -273,6 +274,7 @@ class InsecureJwtTool(BaseTool):
                 )
 
             evidence.note = "알고리즘, 만료 정책, 페이로드 민감 정보 모두 정상입니다."
+            ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,

@@ -31,6 +31,7 @@ import requests
 from va_mcp.core.utils import (
     build_tool_error,
     mask_sensitive,
+    sanitize_request_body,
     sanitize_response_sample,
     utc_now_iso,
 )
@@ -161,6 +162,7 @@ class SensitiveDataExposureTool(BaseTool):
                     "method": method,
                     "url": url,
                     "headers": mask_sensitive(headers),
+                    "body": sanitize_request_body(body),
                 },
                 response_status=resp.status_code,
                 response_headers=dict(resp.headers),
