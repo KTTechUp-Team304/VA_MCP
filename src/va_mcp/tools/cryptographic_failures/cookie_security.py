@@ -117,10 +117,8 @@ class CookieSecurityTool(BaseTool):
 
             # ── Set-Cookie 헤더 수집 ──
             # requests는 동일 키를 하나로 합치므로 raw headers에서 직접 수집
-            set_cookie_headers: list[str] = []
-            for key, value in resp.raw.headers.items():
-                if key.lower() == "set-cookie":
-                    set_cookie_headers.append(value)
+            # getlist()는 urllib3 공식 API로 중복 Set-Cookie 헤더를 안정적으로 반환
+            set_cookie_headers: list[str] = resp.raw.headers.getlist("Set-Cookie")
 
             if not set_cookie_headers:
                 ended_at = utc_now_iso()

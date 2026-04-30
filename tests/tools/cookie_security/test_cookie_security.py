@@ -49,8 +49,7 @@ def mock_response(status_code: int = 200, set_cookies: list[str] | None = None) 
     resp.status_code = status_code
     resp.text = ""
     resp.headers = {}
-    cookie_items = [("set-cookie", c) for c in (set_cookies or [])]
-    resp.raw.headers.items.return_value = cookie_items
+    resp.raw.headers.getlist.return_value = set_cookies or []
     return resp
 
 
