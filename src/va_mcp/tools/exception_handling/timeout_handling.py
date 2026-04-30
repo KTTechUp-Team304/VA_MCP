@@ -58,7 +58,7 @@ class TimeoutHandlingTool(BaseTool):
         headers = dict(request_info.headers)
         headers.setdefault("X-Test-Delay", "true")
 
-        evidence_list = []
+        evidence_list: list[Evidence] = []
         is_vulnerable = False
 
         try:

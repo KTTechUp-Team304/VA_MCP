@@ -22,6 +22,7 @@ from va_mcp.core import (
 from va_mcp.core.utils import (
     build_tool_error,
     mask_sensitive,
+    sanitize_request_body,
     sanitize_response_sample,
     utc_now_iso,
 )
@@ -109,9 +110,9 @@ class DefaultConfigTool(BaseTool):
                 request_headers["X-API-Key"] = auth.token
 
         try:
-            credential_evidence = []
-            admin_accessible_evidence = []
-            admin_protected_evidence = []
+            credential_evidence: list[Evidence] = []
+            admin_accessible_evidence: list[Evidence] = []
+            admin_protected_evidence: list[Evidence] = []
             total_requests = 0
 
             # Phase 1: 기본 자격증명 테스트
@@ -138,7 +139,7 @@ class DefaultConfigTool(BaseTool):
                                 "method": "POST",
                                 "url": login_url,
                                 "headers": mask_sensitive(post_headers),
-                                "body": {"username": username, "password": "***"},
+                                "body": sanitize_request_body({"username": username, "password": "***"}),
                             },
                             response_status=response.status_code,
                             response_headers=dict(response.headers),
