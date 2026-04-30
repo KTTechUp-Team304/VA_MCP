@@ -67,6 +67,21 @@ class RateLimitCheckTool(BaseTool):
                     ended_at=ended_at,
                 )
 
+            # ── safe_mode 체크 ──
+            if tool_input.options.safe_mode:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED,
+                    severity=Severity.INFO,
+                    confidence=Confidence.LOW,
+                    title="Safe Mode 활성화",
+                    description="safe_mode=True 상태에서는 반복 요청을 전송하지 않습니다.",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                )
+
             # ── extra 옵션 추출 ──
             repeat_count = tool_input.options.extra.get("repeat_count", 10)
             interval_ms = tool_input.options.extra.get("interval_ms", 0)
@@ -95,6 +110,27 @@ class RateLimitCheckTool(BaseTool):
 
             # max_requests 제한 적용
             actual_count = min(repeat_count, tool_input.options.max_requests)
+
+            if actual_count < 1:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.ERROR,
+                    severity=Severity.INFO,
+                    confidence=Confidence.LOW,
+                    title="입력값 오류",
+                    description="max_requests 또는 repeat_count가 1 미만이어서 검사를 수행할 수 없습니다.",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    errors=[
+                        build_tool_error(
+                            error_code=ErrorCode.INVALID_INPUT,
+                            error_message=f"actual_count가 0 이하입니다: repeat_count={repeat_count}, max_requests={tool_input.options.max_requests}",
+                            retryable=False,
+                        )
+                    ],
+                )
 
             # ── URL 조립 ──
             base_url = tool_input.target.base_url.rstrip("/")
