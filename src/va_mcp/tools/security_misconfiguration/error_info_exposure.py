@@ -106,7 +106,7 @@ class ErrorInfoExposureTool(BaseTool):
                 request_headers["X-API-Key"] = auth.token
 
         try:
-            vulnerable_evidence = []
+            vulnerable_evidence: list[Evidence] = []
             has_body_exposure = False
 
             for payload in error_payloads[:max_req]:

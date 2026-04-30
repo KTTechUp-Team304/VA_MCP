@@ -84,7 +84,7 @@ class MalformedInputTool(BaseTool):
         headers = dict(tool_input.request.headers)
         headers.setdefault("Content-Type", "application/json")
 
-        vulnerable_evidence = []
+        vulnerable_evidence: list[Evidence] = []
 
         try:
             for payload in payloads[:max_req]:

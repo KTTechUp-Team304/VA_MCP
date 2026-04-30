@@ -83,7 +83,7 @@ class StackTraceExposureTool(BaseTool):
         headers = dict(tool_input.request.headers)
 
         error_keywords = ["Exception", "Traceback", "Error:", "java.lang.", "Stack trace:"]
-        vulnerable_evidence = []
+        vulnerable_evidence: list[Evidence] = []
 
         try:
             for payload in payloads[:max_req]:

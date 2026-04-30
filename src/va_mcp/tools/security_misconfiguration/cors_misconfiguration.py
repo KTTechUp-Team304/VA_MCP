@@ -75,7 +75,7 @@ class CorsMisconfigurationTool(BaseTool):
                 base_headers["X-API-Key"] = auth.token
 
         try:
-            vulnerable_evidence = []
+            vulnerable_evidence: list[Evidence] = []
             result_severity = Severity.INFO
             result_confidence = Confidence.LOW
 

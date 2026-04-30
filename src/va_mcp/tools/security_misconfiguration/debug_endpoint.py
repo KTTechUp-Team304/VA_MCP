@@ -98,7 +98,7 @@ class DebugEndpointTool(BaseTool):
                 request_headers["X-API-Key"] = auth.token
 
         try:
-            vulnerable_evidence = []
+            vulnerable_evidence: list[Evidence] = []
 
             for path in debug_paths[:max_req]:
                 target_url = f"{base_url}{path}"
