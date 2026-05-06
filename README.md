@@ -46,7 +46,7 @@ uv run va-mcp
 
 ## 개발 규칙
 
-팀 개발 규칙(브랜치 전략, 테스트, PR, 커밋 규칙)은 `dev-guide.md`를 참고하세요.
+팀 개발 규칙(브랜치 전략, 테스트, PR, 커밋 규칙)은 [docs/dev_docs/DEV_GUIDE.md](docs/dev_docs/DEV_GUIDE.md)를 참고하세요.
 
 ## 테스트 가이드
 

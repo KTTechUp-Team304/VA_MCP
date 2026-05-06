@@ -5,6 +5,10 @@
 
 core 파일은 수정하시면 안됩니다. 수정이 필요하시면 PM에게 연락주세요.
 
+> **작성일**: 2026.04.23
+> **작성자**: 이윤재
+> **버전**: 1.0.0
+
 ---
 
 ## 1. 프로젝트 구조 (핵심 경로)
@@ -103,39 +107,39 @@ severity="high",
 
 ### 4.1 ToolStatus
 
-| 값 | 의미 |
-|----|------|
-| `ToolStatus.PASSED` | 취약점 미발견, 실행 성공 |
-| `ToolStatus.VULNERABLE` | 취약점 발견, 실행 성공 |
-| `ToolStatus.SKIPPED` | 입력 부족 / 조건 미충족으로 미실행 |
-| `ToolStatus.ERROR` | 실행 중 예외 또는 내부 오류 |
+| 값                      | 의미                               |
+| ----------------------- | ---------------------------------- |
+| `ToolStatus.PASSED`     | 취약점 미발견, 실행 성공           |
+| `ToolStatus.VULNERABLE` | 취약점 발견, 실행 성공             |
+| `ToolStatus.SKIPPED`    | 입력 부족 / 조건 미충족으로 미실행 |
+| `ToolStatus.ERROR`      | 실행 중 예외 또는 내부 오류        |
 
 ### 4.2 Severity
 
-| 값 | 의미 |
-|----|------|
-| `Severity.INFO` | 정보성 |
-| `Severity.LOW` | 낮음 |
-| `Severity.MEDIUM` | 중간 |
-| `Severity.HIGH` | 높음 |
+| 값                  | 의미      |
+| ------------------- | --------- |
+| `Severity.INFO`     | 정보성    |
+| `Severity.LOW`      | 낮음      |
+| `Severity.MEDIUM`   | 중간      |
+| `Severity.HIGH`     | 높음      |
 | `Severity.CRITICAL` | 매우 높음 |
 
 ### 4.3 Confidence
 
-| 값 | 의미 |
-|----|------|
-| `Confidence.LOW` | 추정 수준 |
-| `Confidence.MEDIUM` | 어느 정도 근거 있음 |
-| `Confidence.HIGH` | 명확한 재현 증거 있음 |
+| 값                  | 의미                  |
+| ------------------- | --------------------- |
+| `Confidence.LOW`    | 추정 수준             |
+| `Confidence.MEDIUM` | 어느 정도 근거 있음   |
+| `Confidence.HIGH`   | 명확한 재현 증거 있음 |
 
 ### 4.4 ErrorCode
 
-| 값 | 의미 |
-|----|------|
-| `ErrorCode.TIMEOUT` | 요청 시간 초과 |
-| `ErrorCode.INVALID_INPUT` | 입력값 오류 |
-| `ErrorCode.HTTP_FAILURE` | HTTP 요청 실패 |
-| `ErrorCode.INTERNAL_ERROR` | 내부 예외 |
+| 값                         | 의미           |
+| -------------------------- | -------------- |
+| `ErrorCode.TIMEOUT`        | 요청 시간 초과 |
+| `ErrorCode.INVALID_INPUT`  | 입력값 오류    |
+| `ErrorCode.HTTP_FAILURE`   | HTTP 요청 실패 |
+| `ErrorCode.INTERNAL_ERROR` | 내부 예외      |
 
 ---
 
@@ -153,6 +157,7 @@ def run(self, tool_input: ToolInput) -> ToolResult:
 ```
 
 규칙:
+
 ```text
 - core/schemas.py의 ToolOptions에 필드를 직접 추가하지 않는다.
 - extra 키 이름은 각 tool 파일 상단 주석에 명시한다.
@@ -173,6 +178,7 @@ status=ERROR       → severity=INFO, confidence=LOW 고정  ← ERROR만 엄격
 ```
 
 PASSED severity 기준:
+
 ```text
 취약점이 전혀 없음 (완전 정상)    → severity=INFO
 주의가 필요한 설정이 있음         → severity=LOW   (예: OPTIONS 헤더에 위험 메서드 노출)
@@ -180,7 +186,7 @@ PASSED severity 기준:
 ```
 
 주의: severity=INFO 강제는 ERROR 상태에만 적용된다. PASSED를 INFO로 고정하면
-      "주의 필요" 수준의 결과를 전달할 방법이 없어진다.
+"주의 필요" 수준의 결과를 전달할 방법이 없어진다.
 
 ### 6.2 Evidence 작성 규칙
 
@@ -200,6 +206,7 @@ Evidence(
 ```
 
 민감 정보 마스킹 규칙:
+
 ```text
 headers 안의 Authorization, Cookie, Token, Password, Api-Key 값은
 mask_sensitive() 를 반드시 통과시켜야 한다.
@@ -221,11 +228,11 @@ ended_at = utc_now_iso()     # return 직전 기록
 
 공격 대상 서버 없이도 단계별로 테스트를 작성할 수 있다.
 
-| 단계 | 방법 | 시점 |
-|------|------|------|
+| 단계  | 방법                 | 시점                                |
+| ----- | -------------------- | ----------------------------------- |
 | 1단계 | Mock (unittest.mock) | tool 구현 초기, 서버 없이 로직 검증 |
-| 2단계 | httpbin.org | 실제 HTTP 요청/응답 흐름 확인 |
-| 3단계 | DVWA / Juice Shop | 실제 취약점 탐지 정확도 검증 |
+| 2단계 | httpbin.org          | 실제 HTTP 요청/응답 흐름 확인       |
+| 3단계 | DVWA / Juice Shop    | 실제 취약점 탐지 정확도 검증        |
 
 **지금 당장은 1단계(Mock)만으로 테스트 파일 완성 가능하다.**
 
@@ -238,11 +245,11 @@ tests/tools/<tool_id>/
 └── test_<tool_id>.py
 ```
 
-| 케이스 | 검증 내용 |
-|--------|-----------|
-| `test_passed` | 취약점 없을 때 `status=PASSED` 반환 |
+| 케이스            | 검증 내용                                            |
+| ----------------- | ---------------------------------------------------- |
+| `test_passed`     | 취약점 없을 때 `status=PASSED` 반환                  |
 | `test_vulnerable` | 취약점 있을 때 `status=VULNERABLE` + `evidence` 존재 |
-| `test_error` | 예외 발생 시 `status=ERROR` + `errors` 존재 |
+| `test_error`      | 예외 발생 시 `status=ERROR` + `errors` 존재          |
 
 ### 7.3 Mock 테스트 예시
 
@@ -370,13 +377,13 @@ class IdorBolaTool(BaseTool):
 
 ## 9. 자주 하는 실수
 
-| 실수 | 올바른 방법 |
-|------|-------------|
-| `status="error"` 하드코딩 | `status=ToolStatus.ERROR` 사용 |
-| `tool_id = "IDOR-BOLA"` | `tool_id = "idor_bola"` (snake_case) |
-| `status=ERROR`인데 `severity=HIGH` | `status=ERROR`면 `severity=INFO` 고정 |
-| Evidence에 토큰 원문 그대로 기록 | `mask_sensitive()` 통과 필수 |
+| 실수                                    | 올바른 방법                            |
+| --------------------------------------- | -------------------------------------- |
+| `status="error"` 하드코딩               | `status=ToolStatus.ERROR` 사용         |
+| `tool_id = "IDOR-BOLA"`                 | `tool_id = "idor_bola"` (snake_case)   |
+| `status=ERROR`인데 `severity=HIGH`      | `status=ERROR`면 `severity=INFO` 고정  |
+| Evidence에 토큰 원문 그대로 기록        | `mask_sensitive()` 통과 필수           |
 | `response_body_sample`에 전체 응답 저장 | `sanitize_response_sample()` 통과 필수 |
-| `core/schemas.py`에 필드 직접 추가 | `ToolOptions.extra` 사용 |
-| 테스트 없이 PR 올리기 | passed / vulnerable / error 3종 필수 |
-| 공격 서버 없다고 테스트 미작성 | Mock으로 지금 당장 작성 가능 |
+| `core/schemas.py`에 필드 직접 추가      | `ToolOptions.extra` 사용               |
+| 테스트 없이 PR 올리기                   | passed / vulnerable / error 3종 필수   |
+| 공격 서버 없다고 테스트 미작성          | Mock으로 지금 당장 작성 가능           |

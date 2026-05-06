@@ -1,0 +1,262 @@
+# VA-MCP Architecture V2 (MVP)
+
+> **작성일**: 2026.05.05 
+> **작성자**: 이윤재
+> **버전**: 2.0.0
+
+## 0. 문서 목적
+
+이 문서는 현재 VA-MCP의 실제 개발 방향에 맞춰, 아래 조건을 만족하는 아키텍처를 정의한다.
+
+- 출력(`ToolResult`) 구조는 유지한다.
+- 입력 구조는 최소 범위로만 확장한다.
+- Tool은 개별 호출 가능한 구조로 운영한다.
+- Planner는 휴리스틱 기반이되, 과탐/누락을 줄이도록 규칙을 보정한다.
+
+---
+
+## 1. 시스템 정의
+
+VA-MCP = OWASP 기반 API 취약점 분석 엔진 + MCP 인터페이스
+
+핵심 원칙:
+
+- Core Engine은 MCP에 종속되지 않는다.
+- MCP / REST / CLI는 adapter 계층이다. (추가확장 가능성)
+- 분석 로직은 engine 중심으로 유지한다.
+- MVP는 LLM 없이도 동작 가능한 규칙 기반 설계를 우선한다. (1차 목표)
+
+---
+
+## 2. 전체 흐름 (MVP)
+
+User Input
+-> FeatureExtractor
+-> FeatureSet
+-> Planner
+-> Tool Selection
+-> Tool (개별 실행)
+-> ToolResult
+-> EndpointReport
+
+참고:
+
+- 현재 단계에서는 Scenario/Orchestrator를 최소화하고, Tool 개별 호출 중심으로 운영한다.
+- 추후 필요 시 Scenario 조합 실행 계층을 확장한다.
+
+---
+
+## 3. 입력/출력 구조 전략
+
+## 3.1 출력 구조
+
+출력 구조는 기존 공통 스키마를 유지한다.
+
+- `ToolResult`
+- `Evidence`
+- `ToolError`
+
+즉, 보고서/집계/후처리 파이프라인은 변경하지 않는다.
+
+## 3.2 입력 구조
+
+기존 `EndpointProfile`을 유지하되, Planner 정확도 향상을 위해 최소 필드만 추가한다.
+
+---
+
+## 4. EndpointProfile (MVP V2)
+
+```python
+class EndpointProfile:
+    base_url: str
+    method: str
+    path: str
+
+    headers: dict | None
+    query: dict | None
+    params: dict | None
+    body: dict | None
+
+    auth_required: bool
+    auth_contexts: list
+
+    description: str
+
+    normal_request_example: dict | None
+    normal_response_example: dict | None
+
+    resource_context: dict | None
+
+    side_effect: str  # read / write
+    returns_sensitive_data: bool
+
+    # --- V2 최소 확장 필드 ---
+    roles: list[str] | None                  # 예: ["user", "admin"] (MVP는 2단계 role 권장)
+    owner_id_field: str | None               # 예: "userId"
+    tenant_id_field: str | None              # 멀티테넌트일 때만
+    endpoint_tags: list[str] | None          # 예: ["public"], ["admin"], ["login"], ["file_upload"]
+    input_vectors: list[str] | None          # 예: ["query", "path", "body_json"]
+```
+
+설계 의도:
+
+- 많은 필드를 한 번에 요구하지 않는다.
+- 자동 추론 어려운 `workflow_context`는 MVP에서 제외한다.
+- Tool 실행/Planner 분기에 직접 쓰는 필드만 유지한다.
+
+---
+
+## 5. Feature 추출 기준 (V2)
+
+EndpointProfile -> FeatureSet
+
+기본 Feature:
+
+- has_user_input
+- has_free_text_input
+- has_enum_input
+- has_resource_identifier
+- requires_auth
+- is_state_changing
+- has_state_field
+- is_login_endpoint
+- has_credential_fields
+- has_admin_feature
+- has_debug_feature
+- has_logging_feature
+- returns_sensitive_data
+
+V2 보강 Feature:
+
+- has_role_model (`roles` 기반)
+- has_owner_field (`owner_id_field` 기반)
+- has_tenant_boundary (`tenant_id_field` 기반)
+- has_injection_surface (`input_vectors`, `endpoint_tags` 기반)
+- is_public_endpoint (`endpoint_tags` 기반)
+
+주의:
+
+- `has_user_input=True` 단독으로 A05를 강하게 선택하지 않는다.
+- A05는 `has_injection_surface`와 함께 우선순위를 올린다.
+
+---
+
+## 6. Planner 규칙 (MVP V2)
+
+## 6.1 OWASP 선정 원칙
+
+- Planner는 "최종 확정"이 아니라 "실행 후보 선정"을 담당한다.
+- 규칙은 단순해야 하며, Tool 결과가 최종 판단 근거가 된다.
+
+## 6.2 매핑 규칙
+
+- A01 (Broken Access Control)
+  - 조건: `requires_auth` + (`has_resource_identifier` or `has_owner_field` or `has_role_model`)
+  - 추가 가중: `tenant_id_field` 존재 시 우선순위 상향
+
+- A02 (Security Misconfiguration)
+  - 조건: **항상 baseline 수행**
+  - 이유: 보안헤더/CORS/디버그 노출/기본 설정 문제는 endpoint 이름과 무관하게 발생 가능
+
+- A05 (Injection)
+  - 조건: `has_user_input` + `has_injection_surface`
+  - 참고: `has_user_input`만으로 강선정하지 않음 (과탐 방지)
+
+- A06 (Vulnerable and Outdated / Insecure Design 관련 내부 분류는 팀 정책에 따름)
+  - 조건: `is_state_changing` + `has_state_field`
+
+- A07 (Identification and Authentication Failures)
+  - 조건: `is_login_endpoint` or `has_credential_fields` or `auth_required`
+
+- A09 (Security Logging and Monitoring Failures)
+  - 조건: MVP에서는 제한 수행
+  - 권장: `endpoint_tags`에 `log`, `error`, `debug`가 있는 경우 우선 수행
+
+- A10 (SSRF/기타 기준 항목은 팀 정책에 맞게 상시 점검)
+  - 조건: baseline 또는 정책 기반 상시 수행
+
+---
+
+## 7. 왜 A02는 항상 baseline인가?
+
+기존 규칙 `admin/debug + sensitive`는 근거가 약하다.
+
+- CORS, 보안 헤더, 기본 설정 노출은 일반 endpoint에서도 발생한다.
+- 즉, A02를 endpoint 의미론에만 의존하면 누락 위험이 크다.
+
+따라서 MVP에서는 A02 관련 tool들을 baseline으로 수행한다.
+
+---
+
+## 8. 왜 A05를 단순 user_input로 고정하지 않는가?
+
+백엔드 API 대부분은 입력을 받는다.  
+하지만 모든 입력이 SQL/OS/Template/Path sink로 직접 연결되는 것은 아니다.
+
+따라서:
+
+- A05는 기본 후보로 유지하되,
+- `input_vectors` + `endpoint_tags`로 강도/우선순위를 조절한다.
+
+예:
+
+- `["query", "path"]` + `["search"]` -> A05 우선순위 높음
+- `["body_json"]` + `["state_change_only"]` -> A05 우선순위 보통
+
+---
+
+## 9. Role 모델 정책 (MVP)
+
+LLM 없이 운영 가능한 안정성을 위해 role depth를 2단계로 제한한다.
+
+- 기본: `user`, `admin`
+- 확장: 필요 시 추후 `manager`, `auditor`, `tenant_admin` 등으로 확장
+
+효과:
+
+- BFLA/RBAC/IDOR 계열 테스트 입력 구성이 단순해진다.
+- Planner 규칙의 일관성이 높아진다.
+
+---
+
+## 10. Tool 개별 호출 전략
+
+현재 단계에서는 Tool을 개별 호출 가능한 단위로 설계/운영한다.
+
+장점:
+
+- Tool 입출력 구조 변경 최소화
+- 디버깅/재현 용이
+- MVP에서 빠른 검증 가능
+
+운영 규칙:
+
+- Planner는 tool list만 결정한다.
+- 각 tool은 `ToolInput`을 받아 독립 실행한다.
+- 결과는 공통 `ToolResult`로 통일한다.
+
+---
+
+## 11. 입력 최소화 체크리스트
+
+- [ ] `roles`가 존재하는가? (없으면 `["user","admin"]` 기본값)
+- [ ] `owner_id_field`가 존재하는가? (A01 정밀도 상승)
+- [ ] 멀티테넌트면 `tenant_id_field`가 있는가?
+- [ ] `endpoint_tags`가 최소 1개 이상 있는가?
+- [ ] `input_vectors`가 실제 요청 구조와 일치하는가?
+
+---
+
+## 12. 최종 요약
+
+V2의 핵심은 다음 4가지다.
+
+1. 출력 구조는 고정한다 (`ToolResult` 유지).
+2. 입력은 최소 필드만 확장한다 (`roles`, `owner_id_field`, `tenant_id_field`, `endpoint_tags`, `input_vectors`).
+3. Tool은 개별 호출 중심으로 운영한다.
+4. Planner는 휴리스틱 유지하되, A02 baseline 상시 수행 / A05 과탐 억제 규칙을 적용한다.
+
+한 줄 요약:
+
+"입력 확장은 최소화하고, 출력은 고정한 채, Planner 규칙을 보정해 MVP 정확도를 높이는 구조"
+
