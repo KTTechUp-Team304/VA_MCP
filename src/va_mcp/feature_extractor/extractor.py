@@ -42,13 +42,13 @@ _LOGGING_KEYWORDS: frozenset[str] = frozenset({
 
 # 의존성 노출 단서 키워드 (path 대상) — build-info, version, dependency
 _DEPENDENCY_KEYWORDS: frozenset[str] = frozenset({
-    "build-info", "build_info", "version", "dependency", "dependencies", "actuator",
+    "build-info", "build_info", "version", "dependency", "dependencies",
 })
 
 # 비밀정보 처리 단서 키워드 (path/body 키 대상) — token, secret, api-key, password reset
 _SECRET_KEYWORDS: frozenset[str] = frozenset({
     "token", "secret", "api-key", "apikey", "api_key",
-    "reset-password", "reset_password", "refresh", "revoke",
+    "reset-password", "reset_password", "refresh",
 })
 
 # 파일/설정 처리 단서 키워드 (path/body 키 대상)
