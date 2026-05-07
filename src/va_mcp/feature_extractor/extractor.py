@@ -150,6 +150,7 @@ class FeatureExtractor:
 
     def _has_state_field(self, profile: EndpointProfile) -> bool:
         """body에 상태 변경 키워드(status, role, state 등)가 키로 존재하는지 확인."""
+        # 상태 변경은 REST 규약상 request body로 전달되므로 query는 검사하지 않는다
         return self._any_key_matches(profile.body, _STATE_FIELD_KEYS)
 
     # ------------------------------------------------------------------ #
