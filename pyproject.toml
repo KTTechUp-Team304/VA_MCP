@@ -28,3 +28,9 @@ where = ["src"]
 dev = [
     "pytest>=9.0.3",
 ]
+
+# 통과한 테스트에서도 로그를 터미널에 표시(LOG_LEVEL=DEBUG와 tests/conftest.py와 함께 사용)
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "DEBUG"
+log_cli_format = "%(levelname)s %(name)s: %(message)s"

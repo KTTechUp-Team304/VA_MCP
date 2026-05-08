@@ -1,0 +1,143 @@
+Title: MCP Adapter + Endpoint Analysis Service 연결
+
+---
+
+## 1. 목적
+
+MCP 입력 → EndpointProfile 파싱 → 결과 반환까지의 최소 실행 파이프라인 구축
+
+현재 단계:
+- EndpointProfile 구현 완료
+- FeatureExtractor / Planner 미구현
+
+목표:
+- MCP tool 호출 시 parse 결과 반환
+- 이후 분석 단계 확장 가능한 구조 확보
+
+---
+
+## 2. 디렉토리 구조
+
+src/va_mcp/
+├── adapters/
+│   └── mcp_adapter.py
+│
+├── services/
+│   └── endpoint_analysis.py
+│
+├── endpoint_profile/
+│   └── ...
+│
+├── app.py
+└── server.py
+
+---
+
+## 3. 구현 대상
+
+### 3.1 services/endpoint_analysis.py
+
+역할:
+- raw input → parse_endpoint_profile 호출
+- 성공 시 normalized profile 반환
+- 실패 시 structured error 반환
+
+함수 시그니처:
+
+def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
+
+성공 응답:
+
+{
+    "status": "parsed",
+    "endpoint_profile": profile.to_serializable_dict(),
+    "next_stage": "FeatureExtractor not implemented yet"
+}
+
+실패 응답:
+
+{
+    "status": "invalid_input",
+    "errors": [
+        {
+            "code": issue.code,
+            "field": issue.field,
+            "message": issue.message
+        }
+    ]
+}
+
+---
+
+### 3.2 adapters/mcp_adapter.py
+
+역할:
+- MCP tool 입력을 service로 전달
+- 로직 포함 금지
+
+함수:
+
+def analyze_endpoint_tool(raw_input: dict[str, Any]) -> dict[str, Any]:
+
+---
+
+### 3.3 app.py
+
+역할:
+- MCP tool 등록
+
+구조:
+
+@mcp.tool()
+def analyze_endpoint(input: dict):
+    return analyze_endpoint_tool(input)
+
+주의:
+- parser 직접 호출 금지
+- service만 호출
+
+---
+
+## 4. 테스트
+
+파일:
+tests/services/test_endpoint_analysis.py
+
+테스트 케이스:
+
+1. 정상 입력
+- status == "parsed"
+
+2. normalization 검증
+- method → POST
+- path → /api/...
+
+3. invalid 입력
+- status == "invalid_input"
+
+---
+
+## 5. 금지사항
+
+- core 수정 금지
+- endpoint_profile 로직 중복 구현 금지
+- adapter에 비즈니스 로직 작성 금지
+- service에서 tool 직접 호출 금지 (현재 단계)
+
+---
+
+## 6. 확장 계획
+
+향후 변경:
+
+endpoint_analysis:
+parse → feature → planner → scenario → orchestrator
+
+---
+
+## 7. 완료 기준 (DoD)
+
+- MCP tool 호출 시 정상 응답 반환
+- parse 결과 정확히 반영
+- validation error 정상 처리
+- 구조가 FeatureExtractor 연결 가능한 상태
