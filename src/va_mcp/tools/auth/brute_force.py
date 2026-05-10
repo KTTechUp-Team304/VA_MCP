@@ -1,5 +1,8 @@
 import requests
+import time
+import logging
 from datetime import datetime
+from typing import Any, Dict, List
 
 from va_mcp.core import (
     BaseTool,
@@ -18,16 +21,24 @@ from va_mcp.core.utils import (
     sanitize_response_sample,
     sanitize_request_body,
 )
+# 필드 매핑 적용을 위한 resolver 추가
+from va_mcp.core.resolvers.auth_resolver import parse_credentials, CredentialResolverError
+
 
 class BruteForceTool(BaseTool):
     tool_id = "auth_bruteforce"
     tool_name = "Brute Force Testing"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        # 0) 시작 타임스탬프
+        start_ts = time.time()
         started_at = utc_now_iso()
 
         # 1) 입력 검증
-        if not tool_input.request or not tool_input.auth:
+        req = tool_input.request
+        auth_list = tool_input.auth
+        if not req or not auth_list:
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
@@ -39,94 +50,161 @@ class BruteForceTool(BaseTool):
                 evidence=[],
                 owasp=[],
                 cwe=[],
-                recommendation="",
+                recommendation="request와 auth를 확인하세요.",
                 started_at=started_at,
                 ended_at=started_at,
                 duration_ms=0,
+                tool_version=self.tool_version,
             )
 
+        # 2) credential_fields 매핑 꺼내기
+        mapping = (
+            tool_input.options.extra
+            .get("field_mapping", {})
+            .get("credential_fields")
+        )
+        if not isinstance(mapping, dict) or "username" not in mapping or "password" not in mapping:
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="매핑 누락",
+                description="credential_fields 매핑이 없습니다.",
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="options.extra.field_mapping.credential_fields를 설정하세요.",
+                started_at=started_at,
+                ended_at=started_at,
+                duration_ms=0,
+                tool_version=self.tool_version,
+            )
+
+        # 3) basic auth 컨텍스트만 필터링
+        basic_ctxs = [
+            ctx for ctx in auth_list
+            if ctx.auth_type == "basic" and ctx.token
+        ]
+        if not basic_ctxs:
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="basic AuthContext 없음",
+                description="auth 리스트에 basic 타입과 token이 없습니다.",
+                evidence=[],
+                owasp=[],
+                cwe=[],
+                recommendation="basic AuthContext를 제공하세요.",
+                started_at=started_at,
+                ended_at=started_at,
+                duration_ms=0,
+                tool_version=self.tool_version,
+            )
+
+        # 4) 안전한 URL 조합
+        base = tool_input.target.base_url.rstrip("/")
+        path = req.path.lstrip("/")
+        url = f"{base}/{path}"
+
+        orig_body = req.body or {}
+        headers = req.headers or {}
+
+        last_res = None
+        success_creds: Dict[str, Any] | None = None
+        status_codes: List[int] = []
+
         try:
-            url = tool_input.target.base_url + tool_input.request.path
-
-            last_res = None
-            success_cred = None
-
-            # body가 None인 경우 빈 dict로 방어
-            orig_body = tool_input.request.body or {}
-
-            # 2) auth 리스트 순회 (브루트포스 핵심)
-            for auth_ctx in tool_input.auth:
-                token = auth_ctx.token or ""
-                if ":" not in token:
+            # 5) 브루트포스 시도
+            for auth_ctx in basic_ctxs:
+                try:
+                    creds = parse_credentials(auth_ctx, mapping)
+                except CredentialResolverError as e:
+                    # 이 컨텍스트 건너뜀
                     continue
 
-                username, password = token.split(":", 1)
                 body = orig_body.copy()
-                body["username"] = username
-                body["password"] = password
+                body.update(creds)
 
                 res = requests.request(
-                    method=tool_input.request.method,
+                    method=req.method,
                     url=url,
-                    headers=tool_input.request.headers,
+                    headers=headers,
                     json=body,
                     timeout=tool_input.options.timeout / 1000,
                 )
+                status_codes.append(res.status_code)
                 last_res = res
 
                 if res.status_code == 200:
-                    success_cred = token
+                    success_creds = creds
                     break
 
-            # 3) 결과 판단 & severity 결정
-            if success_cred:
+            # 6) 시도가 하나도 없으면 skipped
+            if not status_codes:
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="요청 없음",
+                    description="유효한 브루트포스 시도가 없습니다.",
+                    evidence=[],
+                    owasp=[],
+                    cwe=[],
+                    recommendation="basic AuthContext와 mapping을 검토하세요.",
+                    started_at=started_at,
+                    ended_at=utc_now_iso(),
+                    duration_ms=int((time.time() - start_ts) * 1000),
+                    tool_version=self.tool_version,
+                )
+
+            # 7) 결과 판단 & 심각도·신뢰도 결정
+            if success_creds:
                 status = ToolStatus.VULNERABLE.value
                 severity = Severity.HIGH.value
-                title = "브루트포스 성공"
-                # 비밀번호 노출 금지 → 마스킹
-                user, pwd = success_cred.split(":", 1)
-                masked_cred = f"{user}:***"
-                description = f"유효한 자격증명 발견: {masked_cred}"
                 confidence = Confidence.HIGH.value
+                title = "브루트포스 성공"
+                user_val = success_creds.get(mapping["username"], "<unknown>")
+                description = f"유효한 자격증명 발견: {user_val}:***"
             else:
                 status = ToolStatus.PASSED.value
                 severity = Severity.INFO.value
+                confidence = Confidence.LOW.value
                 title = "브루트포스 방어됨"
                 description = "모든 인증 시도가 실패했습니다."
-                confidence = Confidence.LOW.value
+
+            owasp = ["A07:2025 Identification and Authentication Failures"]
+            cwe = ["CWE-307"]
+            recommendation = "로그인 시도 횟수를 제한하고 CAPTCHA 등을 적용하세요."
 
             ended_at = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
 
-            # 4) 증거 생성
-            evidence: list[Evidence] = []
+            # 8) 증거 생성
+            evidence: List[Evidence] = []
             if last_res:
-                # 마지막 시도한 body를 그대로 쓰면 비밀번호가 노출될 수 있으므로
-                # request.body에는 orig_body 를 쓰고, credentials info는 note로 남기세요.
                 evidence.append(
                     Evidence(
                         request={
-                            "method": tool_input.request.method,
-                            "path": tool_input.request.path,
-                            "headers": mask_sensitive(tool_input.request.headers),
+                            "method": req.method,
+                            "path": req.path,
+                            "headers": mask_sensitive(headers),
                             "body": sanitize_request_body(orig_body),
                         },
                         response_status=last_res.status_code,
                         response_headers=mask_sensitive(dict(last_res.headers)),
                         response_body_sample=sanitize_response_sample(last_res.text),
-                        note="마지막 시도 결과",
+                        note=f"Attempts={len(status_codes)}, LastStatus={last_res.status_code}",
                     )
                 )
 
-            # 5) duration 계산
-            duration_ms = int(
-                (
-                    datetime.fromisoformat(ended_at.replace("Z", ""))
-                    - datetime.fromisoformat(started_at.replace("Z", ""))
-                ).total_seconds()
-                * 1000
-            )
-
-            # 6) ToolResult 반환 (OWASP/CWE/권고 포함)
+            # 9) ToolResult 반환
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
@@ -136,15 +214,15 @@ class BruteForceTool(BaseTool):
                 title=title,
                 description=description,
                 evidence=evidence,
-                owasp=["A07:2025 Identification and Authentication Failures"],
-                cwe=["CWE-307"],
-                recommendation="로그인 시도 횟수를 제한하고 CAPTCHA 등을 적용하세요.",
+                owasp=owasp,
+                cwe=cwe,
+                recommendation=recommendation,
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=duration_ms,
+                tool_version=self.tool_version,
             )
 
-        # 7) Timeout 예외 처리
         except requests.Timeout as e:
             ended_at = utc_now_iso()
             return ToolResult(
@@ -159,13 +237,13 @@ class BruteForceTool(BaseTool):
                 errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
                 owasp=[],
                 cwe=[],
-                recommendation="",
+                recommendation="요청 시간이 초과되었습니다. 네트워크 상태를 확인하세요.",
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        # 8) 기타 HTTP 오류 처리
         except requests.RequestException as e:
             ended_at = utc_now_iso()
             return ToolResult(
@@ -180,14 +258,15 @@ class BruteForceTool(BaseTool):
                 errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
                 owasp=[],
                 cwe=[],
-                recommendation="",
+                recommendation="네트워크 연결 및 요청 형식을 확인하세요.",
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        # 9) 그 외 내부 오류
         except Exception as e:
+            logging.exception("BruteForceTool internal error")
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
@@ -201,8 +280,9 @@ class BruteForceTool(BaseTool):
                 errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
                 owasp=[],
                 cwe=[],
-                recommendation="",
+                recommendation="도구 내부 오류입니다. 로그를 확인하세요.",
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
+                tool_version=self.tool_version,
             )

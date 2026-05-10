@@ -7,6 +7,8 @@ from __future__ import annotations
 #   "admin_paths"      : list[str]       — 관리 페이지 경로 목록 (기본값: DEFAULT_ADMIN_PATHS)
 
 import requests
+import time
+from typing import Any, Dict, List
 
 from va_mcp.core import (
     AuthContext,
@@ -25,6 +27,11 @@ from va_mcp.core.utils import (
     sanitize_request_body,
     sanitize_response_sample,
     utc_now_iso,
+)
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
 )
 
 DEFAULT_LOGIN_PATH = "/login"
@@ -54,186 +61,200 @@ DEFAULT_ADMIN_PATHS = [
 ]
 
 _CREDENTIAL_SUCCESS_STATUS = {200, 302}
-_ADMIN_ACCESSIBLE_STATUS = {200}
-_ADMIN_PROTECTED_STATUS = {401, 403}
+_ADMIN_ACCESSIBLE_STATUS   = {200}
+_ADMIN_PROTECTED_STATUS    = {401, 403}
 
 
 class DefaultConfigTool(BaseTool):
-    """
-    기본 자격증명과 관리 페이지 노출로 기본 설정 취약점을 탐지하는 도구.
-    기본 계정(admin/admin 등)으로 로그인을 시도하고, 관리 페이지 접근 가능 여부를 점검하며,
-    자격증명 성공 시 CRITICAL, 관리 페이지 노출 시 HIGH/MEDIUM으로 판정한다.
-    """
-
     tool_id = "default_config"
     tool_name = "Default Configuration Vulnerability Detection"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts   = time.time()
         started_at = utc_now_iso()
 
-        if tool_input.request is None:
+        # 1) request 방어
+        req = tool_input.request
+        if not req:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.SKIPPED,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="요청 정보 없음",
                 description="request가 제공되지 않아 점검을 건너뜁니다.",
                 evidence=[],
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        timeout_sec = tool_input.options.timeout / 1000.0
-        max_req = tool_input.options.max_requests
-        login_path = tool_input.options.extra.get("login_path", DEFAULT_LOGIN_PATH)
-        credential_pairs = tool_input.options.extra.get(
-            "credential_pairs", [list(p) for p in DEFAULT_CREDENTIAL_PAIRS]
-        )
-        admin_paths = tool_input.options.extra.get(
-            "admin_paths", list(DEFAULT_ADMIN_PATHS)
-        )
+        # 2) options/extra 안전 처리
+        opts: Any = tool_input.options
+        extra: Dict[str, Any] = opts.extra if opts and opts.extra else {}
+        timeout_s = (opts.timeout / 1000.0) if opts and opts.timeout else 5
+        max_req   = opts.max_requests if opts and opts.max_requests is not None else 1
 
-        base_url = tool_input.target.base_url
-        login_url = f"{base_url}{login_path}"
-        request_headers = dict(tool_input.request.headers)
+        login_path       = extra.get("login_path", DEFAULT_LOGIN_PATH)
+        credential_pairs = extra.get(
+            "credential_pairs",
+            [list(p) for p in DEFAULT_CREDENTIAL_PAIRS]
+        )
+        admin_paths = extra.get("admin_paths", DEFAULT_ADMIN_PATHS)
 
-        if tool_input.auth:
-            auth: AuthContext = tool_input.auth[0]
-            if auth.auth_type == "bearer" and auth.token:
-                request_headers["Authorization"] = f"Bearer {auth.token}"
-            elif auth.auth_type == "cookie" and auth.cookie:
-                request_headers["Cookie"] = auth.cookie
-            elif auth.auth_type == "api_key" and auth.token:
-                request_headers["X-API-Key"] = auth.token
+        # 3) URL 및 기본 headers 준비
+        base = tool_input.target.base_url.rstrip("/")
+        login_url = f"{base}/{login_path.lstrip('/')}"
+        req_headers = req.headers.copy() if req.headers else {}
+
+        # 4) auth_resolver로 auth header 생성 (존재 시)
+        auth_ctx = tool_input.auth[0] if tool_input.auth else None
+        if auth_ctx:
+            try:
+                parse_credentials(auth_ctx)
+                auth_headers = resolve_auth_headers(auth_ctx)
+                req_headers = {**req_headers, **auth_headers}
+            except CredentialResolverError as e:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="Credential 해석 실패",
+                    description=str(e),
+                    evidence=[],
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=int((time.time() - start_ts) * 1000),
+                    tool_version=self.tool_version,
+                )
 
         try:
-            credential_evidence: list[Evidence] = []
-            admin_accessible_evidence: list[Evidence] = []
-            admin_protected_evidence: list[Evidence] = []
+            credential_evidence:          List[Evidence] = []
+            admin_accessible_evidence:    List[Evidence] = []
+            admin_protected_evidence:     List[Evidence] = []
             total_requests = 0
 
             # Phase 1: 기본 자격증명 테스트
-            post_headers = {**request_headers, "Content-Type": "application/json"}
-            for pair in credential_pairs:
+            post_headers = {**req_headers, "Content-Type": "application/json"}
+            for uname, pwd in credential_pairs:
                 if total_requests >= max_req:
                     break
-                username, password = pair[0], pair[1]
 
-                response = requests.post(
+                resp = requests.post(
                     url=login_url,
                     headers=post_headers,
-                    json={"username": username, "password": password},
-                    timeout=timeout_sec,
+                    json={"username": uname, "password": pwd},
+                    timeout=timeout_s,
                     verify=False,
                     allow_redirects=False,
                 )
                 total_requests += 1
 
-                if response.status_code in _CREDENTIAL_SUCCESS_STATUS:
+                if resp.status_code in _CREDENTIAL_SUCCESS_STATUS:
                     credential_evidence.append(
                         Evidence(
                             request={
                                 "method": "POST",
                                 "url": login_url,
                                 "headers": mask_sensitive(post_headers),
-                                "body": sanitize_request_body({"username": username, "password": "***"}),
+                                "body": sanitize_request_body({"username": uname, "password": "***"}),
                             },
-                            response_status=response.status_code,
-                            response_headers=dict(response.headers),
-                            response_body_sample=sanitize_response_sample(response.text),
+                            response_status=resp.status_code,
+                            response_headers=dict(resp.headers),
+                            response_body_sample=sanitize_response_sample(resp.text),
                             note=(
-                                f"기본 자격증명 '{username}/***'으로 "
-                                f"로그인 성공 가능성 확인 (HTTP {response.status_code})"
+                                f"기본 자격증명 '{uname}/***'으로 "
+                                f"로그인 성공 가능성 확인 (HTTP {resp.status_code})"
                             ),
                         )
                     )
-                    break
+                    break  # 로그인 성공 확인 후 종료
 
             # Phase 2: 관리 페이지 노출 테스트
             for path in admin_paths:
                 if total_requests >= max_req:
                     break
-                target_url = f"{base_url}{path}"
 
-                response = requests.get(
-                    url=target_url,
-                    headers=request_headers,
-                    timeout=timeout_sec,
+                url = f"{base}/{path.lstrip('/')}"
+                resp = requests.get(
+                    url=url,
+                    headers=req_headers,
+                    timeout=timeout_s,
                     verify=False,
                     allow_redirects=False,
                 )
                 total_requests += 1
 
-                if response.status_code in _ADMIN_ACCESSIBLE_STATUS:
+                if resp.status_code in _ADMIN_ACCESSIBLE_STATUS:
                     admin_accessible_evidence.append(
                         Evidence(
                             request={
                                 "method": "GET",
-                                "url": target_url,
-                                "headers": mask_sensitive(request_headers),
+                                "url": url,
+                                "headers": mask_sensitive(req_headers),
                             },
-                            response_status=response.status_code,
-                            response_headers=dict(response.headers),
-                            response_body_sample=sanitize_response_sample(response.text),
+                            response_status=resp.status_code,
+                            response_headers=dict(resp.headers),
+                            response_body_sample=sanitize_response_sample(resp.text),
                             note=f"관리 페이지 '{path}'가 인증 없이 접근 가능합니다.",
                         )
                     )
-                elif response.status_code in _ADMIN_PROTECTED_STATUS:
+                elif resp.status_code in _ADMIN_PROTECTED_STATUS:
                     admin_protected_evidence.append(
                         Evidence(
                             request={
                                 "method": "GET",
-                                "url": target_url,
-                                "headers": mask_sensitive(request_headers),
+                                "url": url,
+                                "headers": mask_sensitive(req_headers),
                             },
-                            response_status=response.status_code,
-                            response_headers=dict(response.headers),
-                            response_body_sample=sanitize_response_sample(response.text),
+                            response_status=resp.status_code,
+                            response_headers=dict(resp.headers),
+                            response_body_sample=sanitize_response_sample(resp.text),
                             note=(
                                 f"관리 페이지 '{path}'가 존재하나 "
-                                f"인증으로 보호됩니다 (HTTP {response.status_code})."
+                                f"인증으로 보호됩니다 (HTTP {resp.status_code})."
                             ),
                         )
                     )
 
-            ended_at = utc_now_iso()
-
-            all_evidence = (
-                credential_evidence + admin_accessible_evidence + admin_protected_evidence
-            )
+            ended_at   = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+            all_evidence = credential_evidence + admin_accessible_evidence + admin_protected_evidence
 
             if all_evidence:
                 if credential_evidence:
-                    severity = Severity.CRITICAL
+                    severity   = Severity.CRITICAL
                     confidence = Confidence.HIGH
-                    title = "기본 자격증명으로 로그인 가능"
+                    title      = "기본 자격증명으로 로그인 가능"
                     description = "기본 계정/비밀번호로 로그인에 성공하였습니다."
                 elif admin_accessible_evidence:
-                    severity = Severity.HIGH
+                    severity   = Severity.HIGH
                     confidence = Confidence.HIGH
-                    title = "관리 페이지 무단 접근 가능"
+                    title      = "관리 페이지 무단 접근 가능"
                     description = (
-                        f"{len(admin_accessible_evidence)}개의 관리 페이지가 "
-                        "인증 없이 접근 가능합니다."
+                        f"{len(admin_accessible_evidence)}개의 관리 페이지가 인증 없이 접근 가능합니다."
                     )
                 else:
-                    severity = Severity.MEDIUM
+                    severity   = Severity.MEDIUM
                     confidence = Confidence.MEDIUM
-                    title = "관리 페이지 존재 확인"
+                    title      = "관리 페이지 존재 확인"
                     description = (
-                        f"{len(admin_protected_evidence)}개의 관리 페이지가 "
-                        "존재하나 인증으로 보호됩니다."
+                        f"{len(admin_protected_evidence)}개의 관리 페이지가 존재하나 인증으로 보호됩니다."
                     )
 
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
-                    status=ToolStatus.VULNERABLE,
-                    severity=severity,
-                    confidence=confidence,
+                    status=ToolStatus.VULNERABLE.value,
+                    severity=severity.value,
+                    confidence=confidence.value,
                     title=title,
                     description=description,
                     owasp=["A02:2025 Security Misconfiguration"],
@@ -245,60 +266,59 @@ class DefaultConfigTool(BaseTool):
                     ),
                     started_at=started_at,
                     ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
                 )
 
+            # PASSED
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.PASSED,
-                severity=Severity.INFO,
-                confidence=Confidence.HIGH,
+                status=ToolStatus.PASSED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.HIGH.value,
                 title="기본 설정 취약점 미발견",
                 description="기본 자격증명 및 관리 페이지 노출이 확인되지 않았습니다.",
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
             )
 
-        except requests.exceptions.Timeout:
+        except requests.Timeout as e:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="요청 타임아웃",
-                description="HTTP 요청이 제한 시간 내에 완료되지 않았습니다.",
+                description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.TIMEOUT,
-                        error_message=f"요청이 {timeout_sec}초 안에 완료되지 않았습니다.",
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        except requests.exceptions.ConnectionError as e:
+        except requests.RequestException as e:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
-                title="연결 오류",
-                description="대상 서버에 연결할 수 없습니다.",
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="HTTP 요청 실패",
+                description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.HTTP_FAILURE,
-                        error_message=str(e),
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
         except Exception as e:
@@ -306,18 +326,15 @@ class DefaultConfigTool(BaseTool):
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="도구 실행 오류",
                 description="예상치 못한 오류가 발생했습니다.",
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.INTERNAL_ERROR,
-                        error_message=str(e),
-                        retryable=False,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
