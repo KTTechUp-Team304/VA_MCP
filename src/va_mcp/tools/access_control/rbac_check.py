@@ -16,6 +16,8 @@ SKIPPED 조건:
 from __future__ import annotations
 
 import requests
+import time
+from typing import Dict
 
 from va_mcp.core import (
     AuthContext,
@@ -34,50 +36,128 @@ from va_mcp.core.utils import (
     sanitize_response_sample,
     utc_now_iso,
 )
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
+)
 
 
 class RbacCheckTool(BaseTool):
     tool_id = "rbac_check"
     tool_name = "RBAC Check"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts = time.time()
         started_at = utc_now_iso()
 
+        # 1) 입력 검증
         if not tool_input.request:
             return self._skipped(started_at, "request가 제공되지 않았습니다.")
         if len(tool_input.auth) < 2:
-            return self._skipped(started_at, "auth가 2개 이상 필요합니다 (auth[0]=저권한, auth[-1]=고권한).")
+            return self._skipped(
+                started_at,
+                "auth가 2개 이상 필요합니다 (auth[0]=저권한, auth[-1]=고권한).",
+            )
 
         req = tool_input.request
-        base_url = tool_input.target.base_url.rstrip("/")
-        url = base_url + req.path
-        timeout_s = tool_input.options.timeout / 1000
+        base = tool_input.target.base_url.rstrip("/")
+        url = f"{base}/{req.path.lstrip('/')}"
+        # timeout 안전 처리
+        timeout_s = (
+            tool_input.options.timeout / 1000
+            if tool_input.options and tool_input.options.timeout
+            else 5
+        )
 
-        high_auth = tool_input.auth[-1]
-        low_auth = tool_input.auth[0]
+        # 고권한 / 저권한 AuthContext
+        high_auth: AuthContext = tool_input.auth[-1]
+        low_auth: AuthContext  = tool_input.auth[0]
 
+        # 2) 고권한 토큰 파싱 및 헤더 생성
         try:
-            high_resp = self._send(url, req.method, req.query, req.body, high_auth, timeout_s)
+            parse_credentials(high_auth)
+            high_headers = resolve_auth_headers(high_auth)
+        except CredentialResolverError as e:
+            return self._skipped(
+                started_at,
+                f"Credential 해석 실패 (고권한): {e}"
+            )
 
-            if high_resp.status_code not in (200, 201, 204):
-                return self._skipped(
-                    started_at,
-                    f"고권한({high_auth.role}) 요청도 실패({high_resp.status_code}). 엔드포인트가 올바른지 확인하세요.",
-                )
-
-            low_resp = self._send(url, req.method, req.query, req.body, low_auth, timeout_s)
-
+        # 3) 고권한 요청
+        try:
+            high_resp = requests.request(
+                method=req.method,
+                url=url,
+                headers={**(req.headers or {}), **high_headers},
+                params=req.query or None,
+                json=req.body,
+                timeout=timeout_s,
+            )
         except requests.Timeout:
-            return self._error(started_at, ErrorCode.TIMEOUT, "HTTP 요청 타임아웃이 발생했습니다.", retryable=True)
+            return self._error(
+                started_at,
+                ErrorCode.TIMEOUT,
+                "HTTP 요청 타임아웃이 발생했습니다.",
+                retryable=True,
+            )
         except requests.RequestException as exc:
-            return self._error(started_at, ErrorCode.HTTP_FAILURE, str(exc))
+            return self._error(
+                started_at,
+                ErrorCode.HTTP_FAILURE,
+                str(exc),
+            )
+
+        # 고권한 접근 실패 시 SKIPPED
+        if high_resp.status_code not in (200, 201, 204):
+            return self._skipped(
+                started_at,
+                f"고권한({high_auth.role}) 요청도 실패({high_resp.status_code}). 엔드포인트가 올바른지 확인하세요.",
+            )
+
+        # 4) 저권한 토큰 파싱 및 헤더 생성
+        try:
+            parse_credentials(low_auth)
+            low_headers = resolve_auth_headers(low_auth)
+        except CredentialResolverError as e:
+            return self._skipped(
+                started_at,
+                f"Credential 해석 실패 (저권한): {e}"
+            )
+
+        # 5) 저권한 요청
+        try:
+            low_resp = requests.request(
+                method=req.method,
+                url=url,
+                headers={**(req.headers or {}), **low_headers},
+                params=req.query or None,
+                json=req.body,
+                timeout=timeout_s,
+            )
+        except requests.Timeout:
+            return self._error(
+                started_at,
+                ErrorCode.TIMEOUT,
+                "HTTP 요청 타임아웃이 발생했습니다.",
+                retryable=True,
+            )
+        except requests.RequestException as exc:
+            return self._error(
+                started_at,
+                ErrorCode.HTTP_FAILURE,
+                str(exc),
+            )
 
         ended_at = utc_now_iso()
 
+        # 6) 결과 판단
         if low_resp.status_code in (200, 201, 204):
             bodies_match = low_resp.text.strip() == high_resp.text.strip()
-            confidence = Confidence.HIGH if bodies_match else Confidence.MEDIUM
-
+            confidence_level = (
+                Confidence.HIGH if bodies_match else Confidence.MEDIUM
+            )
             evidence = Evidence(
                 request={
                     "method": req.method,
@@ -93,13 +173,12 @@ class RbacCheckTool(BaseTool):
                     f"응답 body {'일치' if bodies_match else '불일치'}."
                 ),
             )
-
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
                 status=ToolStatus.VULNERABLE,
                 severity=Severity.HIGH,
-                confidence=confidence,
+                confidence=confidence_level,
                 title="역할 기반 접근 제어 우회 가능",
                 description=(
                     f"저권한 역할({low_auth.role})로 고권한 역할({high_auth.role}) 전용 엔드포인트에 "
@@ -116,6 +195,7 @@ class RbacCheckTool(BaseTool):
                 ended_at=ended_at,
             )
 
+        # 7) 차단 확인
         return ToolResult(
             tool_id=self.tool_id,
             tool_name=self.tool_name,
@@ -135,35 +215,6 @@ class RbacCheckTool(BaseTool):
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
-
-    def _send(
-        self,
-        url: str,
-        method: str,
-        query: dict,
-        body: dict | None,
-        auth: AuthContext,
-        timeout_s: float,
-    ) -> requests.Response:
-        headers = self._auth_headers(auth)
-        return requests.request(
-            method=method,
-            url=url,
-            headers=headers,
-            params=query or None,
-            json=body,
-            timeout=timeout_s,
-        )
-
-    def _auth_headers(self, auth: AuthContext) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        if auth.auth_type == "bearer" and auth.token:
-            headers["Authorization"] = f"Bearer {auth.token}"
-        elif auth.auth_type == "api_key" and auth.token:
-            headers["X-API-Key"] = auth.token
-        elif auth.auth_type == "cookie" and auth.cookie:
-            headers["Cookie"] = auth.cookie
-        return headers
 
     def _skipped(self, started_at: str, reason: str) -> ToolResult:
         return ToolResult(

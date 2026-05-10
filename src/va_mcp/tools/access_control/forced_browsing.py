@@ -22,7 +22,9 @@ SKIPPED 조건:
 
 from __future__ import annotations
 
+import time
 import requests
+from typing import List, Dict, Any
 
 from va_mcp.core import (
     AuthContext,
@@ -40,6 +42,11 @@ from va_mcp.core.utils import (
     mask_sensitive,
     sanitize_response_sample,
     utc_now_iso,
+)
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
 )
 
 DEFAULT_PATHS = [
@@ -62,31 +69,97 @@ DEFAULT_PATHS = [
 class ForcedBrowsingTool(BaseTool):
     tool_id = "forced_browsing"
     tool_name = "Forced Browsing"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts = time.time()
         started_at = utc_now_iso()
 
-        base_url = tool_input.target.base_url.rstrip("/")
-        timeout_s = tool_input.options.timeout / 1000
-        max_requests = tool_input.options.max_requests
+        # 1) 안전하게 extra 및 mapping 가져오기
+        extra: Dict[str, Any] = (
+            tool_input.options.extra
+            if tool_input.options and tool_input.options.extra
+            else {}
+        )
+        mapping: Dict[str, Any] = extra.get("field_mapping", {})
 
-        extra_paths: list[str] = tool_input.options.extra.get("paths", [])
-        all_paths = DEFAULT_PATHS + extra_paths
+        # 2) 요청 및 타임아웃/한도 방어
+        req = tool_input.request
+        if not req:
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="입력 부족",
+                description="request 정보가 없습니다.",
+                evidence=[],
+                started_at=started_at,
+                ended_at=started_at,
+                duration_ms=0,
+            )
 
-        auth = tool_input.auth[0] if tool_input.auth else None
+        base = tool_input.target.base_url.rstrip("/")
+        timeout_s = (
+            tool_input.options.timeout / 1000
+            if tool_input.options and tool_input.options.timeout
+            else 5
+        )
+        max_requests = (
+            tool_input.options.max_requests
+            if tool_input.options and tool_input.options.max_requests is not None
+            else 1
+        )
 
-        vulnerable_evidences: list[Evidence] = []
+        # 3) paths 매핑: planner/orchestrator 제공
+        extra_paths = mapping.get("paths", [])
+        all_paths = DEFAULT_PATHS + (extra_paths if isinstance(extra_paths, list) else [])
+
+        # 4) auth 처리: optional
+        auth_ctx: AuthContext | None = tool_input.auth[0] if tool_input.auth else None
+        if auth_ctx:
+            try:
+                _ = parse_credentials(auth_ctx)
+                auth_headers = resolve_auth_headers(auth_ctx)
+            except CredentialResolverError:
+                # auth 파싱 실패 시 skip
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="Credential 해석 실패",
+                    description="AuthContext를 검토하세요.",
+                    evidence=[],
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=int((time.time() - start_ts) * 1000),
+                )
+        else:
+            auth_headers = {}
+
+        vulnerable_evidences: List[Evidence] = []
         request_count = 0
 
         try:
+            # 5) 경로별 요청
             for path in all_paths:
                 if request_count >= max_requests:
                     break
 
-                url = base_url + path
-                resp = self._send(url, auth, timeout_s)
+                url = f"{base}/{path.lstrip('/')}"
+                resp = requests.get(
+                    url=url,
+                    headers={**(req.headers or {}), **auth_headers},
+                    timeout=timeout_s,
+                    allow_redirects=False,
+                )
                 request_count += 1
 
+                # 6) 200 응답은 취약으로 간주
                 if resp.status_code == 200:
                     evidence = Evidence(
                         request={
@@ -102,24 +175,49 @@ class ForcedBrowsingTool(BaseTool):
                     vulnerable_evidences.append(evidence)
 
         except requests.Timeout:
-            return self._error(started_at, ErrorCode.TIMEOUT, "HTTP 요청 타임아웃이 발생했습니다.", retryable=True)
-        except requests.RequestException as exc:
-            return self._error(started_at, ErrorCode.HTTP_FAILURE, str(exc))
-
-        ended_at = utc_now_iso()
-
-        if vulnerable_evidences:
-            exposed_paths = [e.note.split(": ")[-1] for e in vulnerable_evidences]
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.VULNERABLE,
-                severity=Severity.HIGH,
-                confidence=Confidence.HIGH,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="실행 오류",
+                description="HTTP 요청 타임아웃이 발생했습니다.",
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, "HTTP 요청 타임아웃이 발생했습니다.", retryable=True)],
+                started_at=started_at,
+                ended_at=utc_now_iso(),
+                duration_ms=0,
+            )
+        except requests.RequestException as exc:
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="실행 오류",
+                description=str(exc),
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(exc), retryable=True)],
+                started_at=started_at,
+                ended_at=utc_now_iso(),
+                duration_ms=0,
+            )
+
+        ended_at = utc_now_iso()
+
+        # 7) 결과 반환
+        if vulnerable_evidences:
+            exposed = [e.note.split(": ")[-1] for e in vulnerable_evidences]
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.VULNERABLE.value,
+                severity=Severity.HIGH.value,
+                confidence=Confidence.HIGH.value,
                 title="숨겨진 경로 노출 확인 (강제 브라우징)",
                 description=(
                     f"인증 없이 접근 가능한 숨겨진 경로가 발견되었습니다. "
-                    f"노출 경로: {', '.join(exposed_paths)}"
+                    f"노출 경로: {', '.join(exposed)}"
                 ),
                 owasp=["A01:2025 Broken Access Control"],
                 cwe=["CWE-425"],
@@ -130,14 +228,16 @@ class ForcedBrowsingTool(BaseTool):
                 ),
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=int((time.time() - start_ts) * 1000),
+                tool_version=self.tool_version,
             )
 
         return ToolResult(
             tool_id=self.tool_id,
             tool_name=self.tool_name,
-            status=ToolStatus.PASSED,
-            severity=Severity.INFO,
-            confidence=Confidence.MEDIUM,
+            status=ToolStatus.PASSED.value,
+            severity=Severity.INFO.value,
+            confidence=Confidence.MEDIUM.value,
             title="강제 브라우징 취약 경로 미발견",
             description=(
                 f"테스트한 {request_count}개 경로에서 무단 접근 가능한 경로가 발견되지 않았습니다."
@@ -146,52 +246,6 @@ class ForcedBrowsingTool(BaseTool):
             cwe=["CWE-425"],
             started_at=started_at,
             ended_at=ended_at,
-        )
-
-    # ------------------------------------------------------------------
-    # helpers
-    # ------------------------------------------------------------------
-
-    def _send(
-        self,
-        url: str,
-        auth: AuthContext | None,
-        timeout_s: float,
-    ) -> requests.Response:
-        headers = self._auth_headers(auth) if auth else {}
-        return requests.get(
-            url=url,
-            headers=headers,
-            timeout=timeout_s,
-            allow_redirects=False,
-        )
-
-    def _auth_headers(self, auth: AuthContext) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        if auth.auth_type == "bearer" and auth.token:
-            headers["Authorization"] = f"Bearer {auth.token}"
-        elif auth.auth_type == "api_key" and auth.token:
-            headers["X-API-Key"] = auth.token
-        elif auth.auth_type == "cookie" and auth.cookie:
-            headers["Cookie"] = auth.cookie
-        return headers
-
-    def _error(
-        self,
-        started_at: str,
-        error_code: ErrorCode,
-        message: str,
-        retryable: bool = False,
-    ) -> ToolResult:
-        return ToolResult(
-            tool_id=self.tool_id,
-            tool_name=self.tool_name,
-            status=ToolStatus.ERROR,
-            severity=Severity.INFO,
-            confidence=Confidence.LOW,
-            title="실행 오류",
-            description=message,
-            started_at=started_at,
-            ended_at=utc_now_iso(),
-            errors=[build_tool_error(error_code, message, retryable=retryable)],
+            duration_ms=int((time.time() - start_ts) * 1000),
+            tool_version=self.tool_version,
         )

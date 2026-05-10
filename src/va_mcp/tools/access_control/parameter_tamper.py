@@ -26,8 +26,9 @@ SKIPPED 조건:
 from __future__ import annotations
 
 import copy
-
 import requests
+import time
+from typing import Any, Dict, List
 
 from va_mcp.core import (
     AuthContext,
@@ -47,6 +48,11 @@ from va_mcp.core.utils import (
     sanitize_response_sample,
     utc_now_iso,
 )
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
+)
 
 PRIVILEGE_KEYWORDS = {
     "role", "is_admin", "admin", "user_type", "privilege",
@@ -59,66 +65,121 @@ DEFAULT_PAYLOADS = ["admin", "administrator", "superuser", "root", "true", "1", 
 class ParameterTamperTool(BaseTool):
     tool_id = "parameter_tamper"
     tool_name = "Parameter Tampering"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts = time.time()
         started_at = utc_now_iso()
 
-        if not tool_input.request:
+        # 1) request 방어
+        req = tool_input.request
+        if not req:
             return self._skipped(started_at, "request가 제공되지 않았습니다.")
 
-        req = tool_input.request
-        base_url = tool_input.target.base_url.rstrip("/")
-        url = base_url + req.path
-        timeout_s = tool_input.options.timeout / 1000
-        auth = tool_input.auth[0] if tool_input.auth else None
+        # 2) extra 안전 처리 및 매핑 추출
+        extra: Dict[str, Any] = (
+            tool_input.options.extra
+            if tool_input.options and tool_input.options.extra
+            else {}
+        )
+        mapping: Dict[str, Any] = extra.get("field_mapping", {})
 
-        explicit: list[dict] = tool_input.options.extra.get("target_params", [])
-        if explicit:
+        # 3) 타겟 파라미터 목록 (explicit 또는 자동 탐지)
+        explicit: List[Dict[str, Any]] = mapping.get("target_params", [])
+        if explicit and isinstance(explicit, list):
             tamper_targets = explicit
         else:
-            tamper_targets = self._detect_targets(req.query, req.body)
+            tamper_targets = self._detect_targets(req.query or {}, req.body or {})
 
         if not tamper_targets:
             return self._skipped(
                 started_at,
                 "변조 가능한 권한 관련 파라미터가 발견되지 않았습니다. "
-                "extra['target_params']로 명시하거나 query/body에 권한 관련 키를 포함하세요.",
+                "extra['field_mapping']['target_params']로 명시하거나 query/body에 권한 관련 키를 포함하세요.",
             )
 
+        # 4) URL/timeout/auth 준비
+        base = tool_input.target.base_url.rstrip("/")
+        url = f"{base}/{req.path.lstrip('/')}"
+        timeout_s = (
+            tool_input.options.timeout / 1000
+            if tool_input.options and tool_input.options.timeout
+            else 5
+        )
+        auth_ctx: AuthContext | None = tool_input.auth[0] if tool_input.auth else None
+        if auth_ctx:
+            try:
+                parse_credentials(auth_ctx)
+                auth_headers = resolve_auth_headers(auth_ctx)
+            except CredentialResolverError as e:
+                ended_at = utc_now_iso()
+                return self._skipped(
+                    started_at,
+                    f"Credential 해석 실패: {e}",
+                )
+        else:
+            auth_headers = {}
+
+        # 5) 기준 요청
         try:
-            original_resp = self._send(url, req.method, req.query, req.body, auth, timeout_s)
+            original_resp = requests.request(
+                method=req.method,
+                url=url,
+                headers={**(req.headers or {}), **auth_headers},
+                params=req.query or None,
+                json=req.body,
+                timeout=timeout_s,
+                allow_redirects=False,
+            )
         except requests.Timeout:
             return self._error(started_at, ErrorCode.TIMEOUT, "기준 요청 타임아웃이 발생했습니다.", retryable=True)
         except requests.RequestException as exc:
             return self._error(started_at, ErrorCode.HTTP_FAILURE, str(exc))
 
-        vulnerable_evidences: list[Evidence] = []
+        # 6) 변조 시도
+        vulnerable_evidences: List[Evidence] = []
         request_count = 1
-        max_requests = tool_input.options.max_requests
+        max_requests = (
+            tool_input.options.max_requests
+            if tool_input.options and tool_input.options.max_requests is not None
+            else 1
+        )
 
         try:
             for target in tamper_targets:
-                key = target["key"]
+                key = target.get("key")
                 payloads = target.get("values", DEFAULT_PAYLOADS)
-
                 for payload in payloads:
                     if request_count >= max_requests:
                         break
 
-                    tampered_query, tampered_body = self._apply_tamper(
-                        key, str(payload), req.query, req.body
-                    )
+                    # apply tamper
+                    tampered_query = copy.deepcopy(req.query or {})
+                    tampered_body = copy.deepcopy(req.body or {})
+                    if key in tampered_query:
+                        tampered_query[key] = str(payload)
+                    if isinstance(tampered_body, dict) and key in tampered_body:
+                        tampered_body[key] = str(payload)
 
-                    resp = self._send(url, req.method, tampered_query, tampered_body, auth, timeout_s)
+                    # 요청
+                    resp = requests.request(
+                        method=req.method,
+                        url=url,
+                        headers={**(req.headers or {}), **auth_headers},
+                        params=tampered_query or None,
+                        json=tampered_body,
+                        timeout=timeout_s,
+                        allow_redirects=False,
+                    )
                     request_count += 1
 
-                    vuln_evidence = self._evaluate(
+                    # 평가
+                    vuln = self._evaluate(
                         url, req.method, key, payload,
-                        original_resp, resp, auth,
-                        tampered_query, tampered_body,
+                        original_resp, resp, tampered_query, tampered_body,
                     )
-                    if vuln_evidence:
-                        vulnerable_evidences.append(vuln_evidence)
+                    if vuln:
+                        vulnerable_evidences.append(vuln)
 
         except requests.Timeout:
             return self._error(started_at, ErrorCode.TIMEOUT, "변조 요청 타임아웃이 발생했습니다.", retryable=True)
@@ -127,6 +188,7 @@ class ParameterTamperTool(BaseTool):
 
         ended_at = utc_now_iso()
 
+        # 7) 결과 반환
         if vulnerable_evidences:
             max_severity_is_high = any(
                 "상태코드 변화" in e.note for e in vulnerable_evidences
@@ -178,51 +240,28 @@ class ParameterTamperTool(BaseTool):
     # ------------------------------------------------------------------
 
     def _detect_targets(
-        self, query: dict, body: dict | None
-    ) -> list[dict]:
-        """query와 body에서 권한 관련 키를 자동 탐지한다."""
-        targets: list[dict] = []
-        all_keys: set[str] = set(query.keys())
-        if body and isinstance(body, dict):
-            all_keys.update(body.keys())
-
-        for key in all_keys:
-            if key.lower() in PRIVILEGE_KEYWORDS:
-                targets.append({"key": key, "values": DEFAULT_PAYLOADS})
-
+        self, query: dict[str, Any], body: dict[str, Any] | None
+    ) -> List[Dict[str, Any]]:
+        targets: List[Dict[str, Any]] = []
+        keys = set(query.keys())
+        if body:
+            keys.update(body.keys())
+        for k in keys:
+            if k.lower() in PRIVILEGE_KEYWORDS:
+                targets.append({"key": k, "values": DEFAULT_PAYLOADS})
         return targets
-
-    def _apply_tamper(
-        self,
-        key: str,
-        value: str,
-        query: dict,
-        body: dict | None,
-    ) -> tuple[dict, dict | None]:
-        """query 또는 body의 특정 키에 변조 값을 적용한다."""
-        tampered_query = copy.deepcopy(query)
-        tampered_body = copy.deepcopy(body)
-
-        if key in tampered_query:
-            tampered_query[key] = value
-        if tampered_body and isinstance(tampered_body, dict) and key in tampered_body:
-            tampered_body[key] = value
-
-        return tampered_query, tampered_body
 
     def _evaluate(
         self,
         url: str,
         method: str,
         key: str,
-        payload: str,
+        payload: Any,
         original_resp: requests.Response,
         tampered_resp: requests.Response,
-        auth: AuthContext | None,
-        tampered_query: dict,
-        tampered_body: dict | None,
+        tampered_query: dict[str, Any],
+        tampered_body: dict[str, Any] | None,
     ) -> Evidence | None:
-        """변조 응답을 원본과 비교하여 취약 여부를 판단하고 Evidence를 반환한다."""
         orig_status = original_resp.status_code
         new_status = tampered_resp.status_code
 
@@ -259,36 +298,6 @@ class ParameterTamperTool(BaseTool):
             )
 
         return None
-
-    def _send(
-        self,
-        url: str,
-        method: str,
-        query: dict,
-        body: dict | None,
-        auth: AuthContext | None,
-        timeout_s: float,
-    ) -> requests.Response:
-        headers = self._auth_headers(auth) if auth else {}
-        return requests.request(
-            method=method,
-            url=url,
-            headers=headers,
-            params=query or None,
-            json=body,
-            timeout=timeout_s,
-            allow_redirects=False,
-        )
-
-    def _auth_headers(self, auth: AuthContext) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        if auth.auth_type == "bearer" and auth.token:
-            headers["Authorization"] = f"Bearer {auth.token}"
-        elif auth.auth_type == "api_key" and auth.token:
-            headers["X-API-Key"] = auth.token
-        elif auth.auth_type == "cookie" and auth.cookie:
-            headers["Cookie"] = auth.cookie
-        return headers
 
     def _skipped(self, started_at: str, reason: str) -> ToolResult:
         return ToolResult(

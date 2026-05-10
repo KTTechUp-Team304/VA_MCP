@@ -28,9 +28,10 @@ SKIPPED 조건:
 from __future__ import annotations
 
 import requests
+import time
+from typing import List, Dict, Any
 
 from va_mcp.core import (
-    AuthContext,
     BaseTool,
     Confidence,
     ErrorCode,
@@ -43,7 +44,13 @@ from va_mcp.core import (
 from va_mcp.core.utils import (
     build_tool_error,
     mask_sensitive,
+    sanitize_response_sample,
     utc_now_iso,
+)
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
 )
 
 DEFAULT_TEST_ORIGINS = [
@@ -58,28 +65,71 @@ _WILDCARD = "*"
 class CorsCheckTool(BaseTool):
     tool_id = "cors_check"
     tool_name = "CORS Misconfiguration Check"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts = time.time()
         started_at = utc_now_iso()
 
-        base_url = tool_input.target.base_url.rstrip("/")
-        path = tool_input.request.path if tool_input.request else "/"
-        url = base_url + path
-        timeout_s = tool_input.options.timeout / 1000
-        auth = tool_input.auth[0] if tool_input.auth else None
-
-        test_origins: list[str] = tool_input.options.extra.get(
-            "test_origins", DEFAULT_TEST_ORIGINS
+        # 안전하게 extra 가져오기
+        extra: Dict[str, Any] = (
+            tool_input.options.extra
+            if tool_input.options and tool_input.options.extra
+            else {}
+        )
+        # 요청 방어
+        req = tool_input.request
+        base = tool_input.target.base_url.rstrip("/")
+        path = req.path if req and req.path else "/"
+        url = f"{base}/{path.lstrip('/')}"
+        timeout_s = (
+            tool_input.options.timeout / 1000
+            if tool_input.options and tool_input.options.timeout
+            else 5
+        )
+        max_requests = (
+            tool_input.options.max_requests
+            if tool_input.options and tool_input.options.max_requests is not None
+            else len(DEFAULT_TEST_ORIGINS)
         )
 
-        vulnerable_evidences: list[Evidence] = []
+        # auth 방어 및 resolver 적용
+        auth_ctx = tool_input.auth[0] if tool_input.auth else None
+        if auth_ctx:
+            try:
+                _ = parse_credentials(auth_ctx)
+                auth_headers = resolve_auth_headers(auth_ctx)
+            except CredentialResolverError as e:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="Credential 해석 실패",
+                    description=str(e),
+                    evidence=[],
+                    owasp=[],
+                    cwe=[],
+                    recommendation="AuthContext를 검토하세요.",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=int((time.time() - start_ts) * 1000),
+                )
+        else:
+            auth_headers = {}
+
+        # 테스트할 Origin 목록
+        test_origins: List[str] = extra.get("test_origins", DEFAULT_TEST_ORIGINS)
+
+        vulnerable_evidences: List[Evidence] = []
         worst_severity = Severity.INFO
 
-        max_requests = tool_input.options.max_requests
-
         try:
+            # 각 Origin 테스트
             for origin in test_origins[:max_requests]:
-                result = self._test_origin(url, origin, auth, timeout_s)
+                result = self._test_origin(url, origin, auth_headers, timeout_s)
                 if result is None:
                     continue
                 evidence, severity = result
@@ -88,12 +138,22 @@ class CorsCheckTool(BaseTool):
                     worst_severity = severity
 
         except requests.Timeout:
-            return self._error(started_at, ErrorCode.TIMEOUT, "HTTP 요청 타임아웃이 발생했습니다.", retryable=True)
+            return self._error(
+                started_at,
+                ErrorCode.TIMEOUT,
+                "HTTP 요청 타임아웃이 발생했습니다.",
+                retryable=True,
+            )
         except requests.RequestException as exc:
-            return self._error(started_at, ErrorCode.HTTP_FAILURE, str(exc))
+            return self._error(
+                started_at,
+                ErrorCode.HTTP_FAILURE,
+                str(exc),
+            )
 
         ended_at = utc_now_iso()
 
+        # 취약 여부 결과 반환
         if vulnerable_evidences:
             return ToolResult(
                 tool_id=self.tool_id,
@@ -116,6 +176,8 @@ class CorsCheckTool(BaseTool):
                 ),
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=int((time.time() - start_ts) * 1000),
+                tool_version=self.tool_version,
             )
 
         return ToolResult(
@@ -132,6 +194,8 @@ class CorsCheckTool(BaseTool):
             cwe=["CWE-942"],
             started_at=started_at,
             ended_at=ended_at,
+            duration_ms=int((time.time() - start_ts) * 1000),
+            tool_version=self.tool_version,
         )
 
     # ------------------------------------------------------------------
@@ -142,12 +206,10 @@ class CorsCheckTool(BaseTool):
         self,
         url: str,
         origin: str,
-        auth: AuthContext | None,
+        auth_headers: dict[str, str],
         timeout_s: float,
     ) -> tuple[Evidence, Severity] | None:
-        """단일 Origin으로 CORS 테스트를 수행하고, 취약하면 (Evidence, Severity)를 반환한다."""
-        headers = self._auth_headers(auth) if auth else {}
-        headers["Origin"] = origin
+        headers = {**auth_headers, "Origin": origin}
 
         resp = requests.get(
             url=url,
@@ -168,7 +230,7 @@ class CorsCheckTool(BaseTool):
             request={
                 "method": "GET",
                 "url": url,
-                "headers": mask_sensitive({**headers}),
+                "headers": mask_sensitive(headers),
             },
             response_status=resp.status_code,
             response_headers={
@@ -184,25 +246,19 @@ class CorsCheckTool(BaseTool):
     def _evaluate_severity(
         self, origin: str, acao: str, acac: bool
     ) -> Severity | None:
-        """응답 헤더를 분석해서 심각도를 반환한다. 취약하지 않으면 None을 반환한다."""
         if not acao:
             return None
 
         is_wildcard = acao == _WILDCARD
-        # null origin은 "반사"로 분류하지 않고 별도 판단한다
         is_null_allowed = origin == "null" and acao == "null"
         is_reflected = acao == origin and origin not in ("", "null")
 
         if (is_wildcard or is_reflected) and acac:
             return Severity.CRITICAL
-
         if is_wildcard or is_reflected:
             return Severity.HIGH
-
-        # null origin + 크레덴셜 허용도 세션 탈취 가능하여 CRITICAL
         if is_null_allowed and acac:
             return Severity.CRITICAL
-
         if is_null_allowed:
             return Severity.MEDIUM
 
@@ -223,16 +279,6 @@ class CorsCheckTool(BaseTool):
             Severity.CRITICAL: 4,
         }.get(severity, 0)
 
-    def _auth_headers(self, auth: AuthContext) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        if auth.auth_type == "bearer" and auth.token:
-            headers["Authorization"] = f"Bearer {auth.token}"
-        elif auth.auth_type == "api_key" and auth.token:
-            headers["X-API-Key"] = auth.token
-        elif auth.auth_type == "cookie" and auth.cookie:
-            headers["Cookie"] = auth.cookie
-        return headers
-
     def _error(
         self,
         started_at: str,
@@ -251,4 +297,5 @@ class CorsCheckTool(BaseTool):
             started_at=started_at,
             ended_at=utc_now_iso(),
             errors=[build_tool_error(error_code, message, retryable=retryable)],
+            tool_version=self.tool_version,
         )

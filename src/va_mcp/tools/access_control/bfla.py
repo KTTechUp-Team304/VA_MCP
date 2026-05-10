@@ -22,6 +22,8 @@ SKIPPED 조건:
 from __future__ import annotations
 
 import requests
+import time
+from typing import List, Dict, Any
 
 from va_mcp.core import (
     AuthContext,
@@ -40,63 +42,115 @@ from va_mcp.core.utils import (
     sanitize_response_sample,
     utc_now_iso,
 )
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
+)
 
 
 class BflaTool(BaseTool):
     tool_id = "bfla"
     tool_name = "BFLA Testing"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts = time.time()
         started_at = utc_now_iso()
 
+        # 1) 필수 입력 체크
         if not tool_input.request:
             return self._skipped(started_at, "request가 제공되지 않았습니다.")
         if not tool_input.auth:
             return self._skipped(started_at, "auth가 최소 1개 필요합니다.")
 
+        # 2) extra 안전 처리
+        extra: Dict[str, Any] = (
+            tool_input.options.extra
+            if tool_input.options and tool_input.options.extra
+            else {}
+        )
+
         req = tool_input.request
         base_url = tool_input.target.base_url.rstrip("/")
-        timeout_s = tool_input.options.timeout / 1000
-        max_requests = tool_input.options.max_requests
-        attacker = tool_input.auth[0]
+        timeout_s = (
+            tool_input.options.timeout / 1000
+            if tool_input.options and tool_input.options.timeout
+            else 5
+        )
+        max_requests = (
+            tool_input.options.max_requests
+            if tool_input.options and tool_input.options.max_requests
+            else 1
+        )
 
-        additional_paths: list[str] = tool_input.options.extra.get("additional_paths", [])
+        attacker: AuthContext = tool_input.auth[0]
+
+        # 3) resolver로 auth 헤더 생성
+        try:
+            _ = parse_credentials(attacker)
+            auth_headers = resolve_auth_headers(attacker)
+        except CredentialResolverError as e:
+            return self._skipped(started_at, "Credential 해석 실패")
+
+        # 4) 테스트할 경로 목록
+        additional_paths: List[str] = extra.get("additional_paths", [])
         all_paths = [req.path] + additional_paths
 
-        vulnerable_evidences: list[Evidence] = []
+        vulnerable_evidences: List[Evidence] = []
         request_count = 0
 
         try:
+            # 5) 각 경로 접근 시도
             for path in all_paths:
                 if request_count >= max_requests:
                     break
 
-                url = base_url + path
-                resp = self._send(url, req.method, req.query, req.body, attacker, timeout_s)
+                url = f"{base_url}/{path.lstrip('/')}"
+                resp = requests.request(
+                    method=req.method,
+                    url=url,
+                    headers={**(req.headers or {}), **auth_headers},
+                    params=req.query or None,
+                    json=req.body,
+                    timeout=timeout_s,
+                )
                 request_count += 1
 
+                # 6) 접근 성공 시 취약으로 간주
                 if resp.status_code in (200, 201, 204):
+                    role_val = getattr(attacker, "role", "")
                     evidence = Evidence(
                         request={
                             "method": req.method,
                             "url": url,
                             "headers": mask_sensitive(dict(resp.request.headers)),
-                            "role": attacker.role,
+                            "role": role_val,
                         },
                         response_status=resp.status_code,
                         response_headers=dict(resp.headers),
                         response_body_sample=sanitize_response_sample(resp.text),
-                        note=f"저권한({attacker.role})으로 관리 기능 접근 성공: {path}",
+                        note=f"저권한({role_val})으로 관리 기능 접근 성공: {path}",
                     )
                     vulnerable_evidences.append(evidence)
 
         except requests.Timeout:
-            return self._error(started_at, ErrorCode.TIMEOUT, "HTTP 요청 타임아웃이 발생했습니다.", retryable=True)
+            return self._error(
+                started_at,
+                ErrorCode.TIMEOUT,
+                "HTTP 요청 타임아웃이 발생했습니다.",
+                retryable=True,
+            )
         except requests.RequestException as exc:
-            return self._error(started_at, ErrorCode.HTTP_FAILURE, str(exc))
+            return self._error(
+                started_at,
+                ErrorCode.HTTP_FAILURE,
+                str(exc),
+            )
 
         ended_at = utc_now_iso()
 
+        # 7) 최종 결과 반환
         if vulnerable_evidences:
             vuln_paths = [e.note.split(": ")[-1] for e in vulnerable_evidences]
             return ToolResult(
@@ -107,7 +161,7 @@ class BflaTool(BaseTool):
                 confidence=Confidence.HIGH,
                 title="기능 레벨 접근 제어 우회 가능 (BFLA)",
                 description=(
-                    f"저권한 역할({attacker.role})이 관리자 전용 기능에 접근하는 데 성공했습니다. "
+                    f"저권한 역할({getattr(attacker,'role','')})이 관리자 전용 기능에 접근하는 데 성공했습니다. "
                     f"취약 경로: {', '.join(vuln_paths)}"
                 ),
                 owasp=["A01:2025 Broken Access Control"],
@@ -119,6 +173,7 @@ class BflaTool(BaseTool):
                 ),
                 started_at=started_at,
                 ended_at=ended_at,
+                tool_version=self.tool_version,
             )
 
         return ToolResult(
@@ -129,46 +184,19 @@ class BflaTool(BaseTool):
             confidence=Confidence.HIGH,
             title="기능 레벨 접근 제어 정상",
             description=(
-                f"저권한 역할({attacker.role})의 관리 기능 접근이 모두 차단되었습니다. "
+                f"저권한 역할({getattr(attacker,'role','')})의 관리 기능 접근이 모두 차단되었습니다. "
                 f"테스트한 경로 수: {request_count}"
             ),
             owasp=["A01:2025 Broken Access Control"],
             cwe=["CWE-285"],
             started_at=started_at,
             ended_at=ended_at,
+            tool_version=self.tool_version,
         )
 
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
-
-    def _send(
-        self,
-        url: str,
-        method: str,
-        query: dict,
-        body: dict | None,
-        auth: AuthContext,
-        timeout_s: float,
-    ) -> requests.Response:
-        return requests.request(
-            method=method,
-            url=url,
-            headers=self._auth_headers(auth),
-            params=query or None,
-            json=body,
-            timeout=timeout_s,
-        )
-
-    def _auth_headers(self, auth: AuthContext) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        if auth.auth_type == "bearer" and auth.token:
-            headers["Authorization"] = f"Bearer {auth.token}"
-        elif auth.auth_type == "api_key" and auth.token:
-            headers["X-API-Key"] = auth.token
-        elif auth.auth_type == "cookie" and auth.cookie:
-            headers["Cookie"] = auth.cookie
-        return headers
 
     def _skipped(self, started_at: str, reason: str) -> ToolResult:
         return ToolResult(

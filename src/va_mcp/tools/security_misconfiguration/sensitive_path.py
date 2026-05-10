@@ -5,6 +5,8 @@ from __future__ import annotations
 #                                  (기본값: DEFAULT_SENSITIVE_PATHS)
 
 import requests
+import time
+from typing import Any, Dict, List
 
 from va_mcp.core import (
     AuthContext,
@@ -22,6 +24,11 @@ from va_mcp.core.utils import (
     mask_sensitive,
     sanitize_response_sample,
     utc_now_iso,
+)
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
 )
 
 DEFAULT_SENSITIVE_PATHS = [
@@ -53,183 +60,181 @@ class SensitivePathTool(BaseTool):
 
     tool_id = "sensitive_path"
     tool_name = "Sensitive Path Detection"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts   = time.time()
         started_at = utc_now_iso()
 
-        if tool_input.request is None:
+        # 1) request 방어
+        req = tool_input.request
+        if not req:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.SKIPPED,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="요청 정보 없음",
                 description="request가 제공되지 않아 점검을 건너뜁니다.",
                 evidence=[],
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        timeout_sec = tool_input.options.timeout / 1000.0
-        max_req = tool_input.options.max_requests
-        sensitive_paths = tool_input.options.extra.get(
-            "sensitive_paths", list(DEFAULT_SENSITIVE_PATHS)
-        )
+        # 2) options/extra 안전 처리
+        opts: Any = tool_input.options
+        extra: Dict[str, Any] = opts.extra if opts and opts.extra else {}
+        timeout_s = (opts.timeout / 1000.0) if opts and opts.timeout else 5
+        max_req   = opts.max_requests if opts and opts.max_requests is not None else len(DEFAULT_SENSITIVE_PATHS)
+        sensitive_paths: List[str] = extra.get("sensitive_paths", DEFAULT_SENSITIVE_PATHS)
 
-        base_url = tool_input.target.base_url
-        request_headers = dict(tool_input.request.headers)
+        # 3) URL 베이스 및 headers 준비
+        base = tool_input.target.base_url.rstrip("/")
+        orig_headers = req.headers or {}
 
-        if tool_input.auth:
-            auth: AuthContext = tool_input.auth[0]
-            if auth.auth_type == "bearer" and auth.token:
-                request_headers["Authorization"] = f"Bearer {auth.token}"
-            elif auth.auth_type == "cookie" and auth.cookie:
-                request_headers["Cookie"] = auth.cookie
-            elif auth.auth_type == "api_key" and auth.token:
-                request_headers["X-API-Key"] = auth.token
-
-        try:
-            vulnerable_evidence: list[Evidence] = []
-
-            for path in sensitive_paths[:max_req]:
-                target_url = f"{base_url}{path}"
-
-                response = requests.get(
-                    url=target_url,
-                    headers=request_headers,
-                    timeout=timeout_sec,
-                    verify=False,
-                    allow_redirects=False,
-                )
-
-                if response.status_code == 200:
-                    vulnerable_evidence.append(
-                        Evidence(
-                            request={
-                                "method": "GET",
-                                "url": target_url,
-                                "headers": mask_sensitive(request_headers),
-                            },
-                            response_status=response.status_code,
-                            response_headers=dict(response.headers),
-                            response_body_sample=sanitize_response_sample(response.text),
-                            note=f"민감 경로 '{path}' 직접 접근 가능 (HTTP 200)",
-                        )
-                    )
-                elif response.status_code == 403:
-                    vulnerable_evidence.append(
-                        Evidence(
-                            request={
-                                "method": "GET",
-                                "url": target_url,
-                                "headers": mask_sensitive(request_headers),
-                            },
-                            response_status=response.status_code,
-                            response_headers=dict(response.headers),
-                            response_body_sample=sanitize_response_sample(response.text),
-                            note=f"민감 경로 '{path}' 존재 확인 (HTTP 403 - 접근 차단됨)",
-                        )
-                    )
-
-            ended_at = utc_now_iso()
-
-            if vulnerable_evidence:
-                has_accessible = any(e.response_status == 200 for e in vulnerable_evidence)
-                severity = Severity.HIGH if has_accessible else Severity.MEDIUM
-                confidence = Confidence.HIGH if has_accessible else Confidence.MEDIUM
-
+        # 4) auth_resolver로 auth header 생성
+        auth_ctx: AuthContext | None = tool_input.auth[0] if tool_input.auth else None
+        if auth_ctx:
+            try:
+                parse_credentials(auth_ctx)
+                auth_headers = resolve_auth_headers(auth_ctx)
+            except CredentialResolverError as e:
+                ended_at = utc_now_iso()
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
-                    status=ToolStatus.VULNERABLE,
-                    severity=severity,
-                    confidence=confidence,
-                    title="민감 경로 노출 발견",
-                    description=f"{len(vulnerable_evidence)}개의 민감 경로가 탐지되었습니다.",
-                    owasp=["A02:2025 Security Misconfiguration"],
-                    cwe=["CWE-538"],
-                    evidence=vulnerable_evidence,
-                    recommendation=(
-                        "민감한 파일과 디렉터리는 웹 루트 외부로 이동하거나 접근을 차단하세요. "
-                        "웹 서버 설정에서 .env, .git 등 숨김 파일 및 백업 파일 접근을 금지하세요."
-                    ),
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="Credential 해석 실패",
+                    description=str(e),
+                    evidence=[],
                     started_at=started_at,
                     ended_at=ended_at,
+                    duration_ms=int((time.time() - start_ts) * 1000),
+                    tool_version=self.tool_version,
+                )
+        else:
+            auth_headers = {}
+
+        vulnerable_evidence: List[Evidence] = []
+
+        try:
+            # 5) 민감 경로별 요청
+            for path in sensitive_paths[:max_req]:
+                url = f"{base}/{path.lstrip('/')}"
+                headers = {**orig_headers, **auth_headers}
+
+                resp = requests.get(
+                    url=url,
+                    headers=headers,
+                    timeout=timeout_s,
+                    allow_redirects=False,
                 )
 
-            return ToolResult(
-                tool_id=self.tool_id,
-                tool_name=self.tool_name,
-                status=ToolStatus.PASSED,
-                severity=Severity.INFO,
-                confidence=Confidence.HIGH,
-                title="민감 경로 미노출",
-                description="점검한 민감 경로에서 외부 접근 가능한 경로가 발견되지 않았습니다.",
-                started_at=started_at,
-                ended_at=ended_at,
-            )
+                status = resp.status_code
+                if status == 200:
+                    note = f"민감 경로 '{path}' 직접 접근 가능 (HTTP 200)"
+                elif status == 403:
+                    note = f"민감 경로 '{path}' 존재 확인 (HTTP 403 - 접근 차단됨)"
+                else:
+                    continue
 
-        except requests.exceptions.Timeout:
+                vulnerable_evidence.append(
+                    Evidence(
+                        request={
+                            "method": "GET",
+                            "url": url,
+                            "headers": mask_sensitive(headers),
+                        },
+                        response_status=status,
+                        response_headers=dict(resp.headers),
+                        response_body_sample=sanitize_response_sample(resp.text),
+                        note=note,
+                    )
+                )
+
+        except requests.Timeout as e:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="요청 타임아웃",
-                description="HTTP 요청이 제한 시간 내에 완료되지 않았습니다.",
+                description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.TIMEOUT,
-                        error_message=f"요청이 {timeout_sec}초 안에 완료되지 않았습니다.",
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
-
-        except requests.exceptions.ConnectionError as e:
+        except requests.RequestException as e:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
-                title="연결 오류",
-                description="대상 서버에 연결할 수 없습니다.",
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="HTTP 요청 실패",
+                description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.HTTP_FAILURE,
-                        error_message=str(e),
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        except Exception as e:
-            ended_at = utc_now_iso()
+        ended_at   = utc_now_iso()
+        duration_ms = int((time.time() - start_ts) * 1000)
+
+        # 6) 결과 반환
+        if vulnerable_evidence:
+            has_access = any(e.response_status == 200 for e in vulnerable_evidence)
+            severity   = Severity.HIGH if has_access else Severity.MEDIUM
+            confidence = Confidence.HIGH if has_access else Confidence.MEDIUM
+
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
-                title="도구 실행 오류",
-                description="예상치 못한 오류가 발생했습니다.",
+                status=ToolStatus.VULNERABLE.value,
+                severity=severity.value,
+                confidence=confidence.value,
+                title="민감 경로 노출 발견",
+                description=f"{len(vulnerable_evidence)}개의 민감 경로가 탐지되었습니다.",
+                owasp=["A02:2025 Security Misconfiguration"],
+                cwe=["CWE-538"],
+                evidence=vulnerable_evidence,
+                recommendation=(
+                    "민감한 파일과 디렉터리는 웹 루트 외부로 이동하거나 접근을 차단하세요. "
+                    "웹 서버 설정에서 .env, .git 등 숨김 파일 및 백업 파일 접근을 금지하세요."
+                ),
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.INTERNAL_ERROR,
-                        error_message=str(e),
-                        retryable=False,
-                    )
-                ],
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
             )
+
+        # PASSED
+        return ToolResult(
+            tool_id=self.tool_id,
+            tool_name=self.tool_name,
+            status=ToolStatus.PASSED.value,
+            severity=Severity.INFO.value,
+            confidence=Confidence.HIGH.value,
+            title="민감 경로 미노출",
+            description="점검한 민감 경로에서 외부 접근 가능한 경로가 발견되지 않았습니다.",
+            evidence=[],
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_ms=duration_ms,
+            tool_version=self.tool_version,
+        )

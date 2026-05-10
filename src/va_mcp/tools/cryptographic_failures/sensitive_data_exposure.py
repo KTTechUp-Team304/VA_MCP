@@ -15,19 +15,21 @@ extra 옵션:
 from __future__ import annotations
 
 import re
+import requests
+import time
+from typing import Any, Dict, List, Tuple
 
 from va_mcp.core import (
     BaseTool,
-    Confidence,
-    ErrorCode,
-    Evidence,
-    Severity,
     ToolInput,
     ToolResult,
+    Evidence,
     ToolStatus,
+    Severity,
+    Confidence,
+    ErrorCode,
+    AuthContext,
 )
-import requests
-
 from va_mcp.core.utils import (
     build_tool_error,
     mask_sensitive,
@@ -35,9 +37,14 @@ from va_mcp.core.utils import (
     sanitize_response_sample,
     utc_now_iso,
 )
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
+)
 
 # 기본 민감 정보 탐지 패턴 (패턴명, 정규식)
-DEFAULT_PATTERNS: list[tuple[str, str]] = [
+DEFAULT_PATTERNS: List[Tuple[str, str]] = [
     ("이메일", r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"),
     ("전화번호 (한국)", r"0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}"),
     ("주민등록번호", r"\d{6}[-\s]?\d{7}"),
@@ -54,215 +61,237 @@ MAX_SCAN_SIZE = 500_000
 
 class SensitiveDataExposureTool(BaseTool):
     """
-    API 응답 본문에서 민감 정보가 평문으로 노출되는지 탐지한다.
+    API 응답 본문에서 민감 정보가 평문으로 노출되는지 탐지합니다.
 
-    - 패턴 매칭 성공 시: VULNERABLE (민감 정보 노출)
+    - 패턴 매칭 성공 시: VULNERABLE
     - 패턴 매칭 없음 시: PASSED
     """
-
     tool_id = "sensitive_data_exposure"
     tool_name = "Sensitive Data Exposure Check"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts   = time.time()
         started_at = utc_now_iso()
 
+        # 1) request 방어
+        req = tool_input.request
+        if not req:
+            ended_at = utc_now_iso()
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="요청 정보 없음",
+                description="request가 제공되지 않아 검사를 수행할 수 없습니다.",
+                evidence=[],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=0,
+                tool_version=self.tool_version,
+            )
+
+        # 2) options/extra 방어
+        opts: Any = tool_input.options
+        extra: Dict[str, Any] = opts.extra if opts and opts.extra else {}
+        timeout_s = (opts.timeout / 1000.0) if opts and opts.timeout else 5
+        max_req   = opts.max_requests if opts and opts.max_requests is not None else len(DEFAULT_PATTERNS)
+
+        # 3) 사용자 정의 패턴
+        custom_raw = extra.get("custom_patterns", [])
+        if not isinstance(custom_raw, list):
+            ended_at = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="입력값 오류",
+                description="custom_patterns는 리스트여야 합니다.",
+                evidence=[],
+                errors=[build_tool_error(
+                    ErrorCode.INVALID_INPUT.value,
+                    f"custom_patterns 값이 유효하지 않습니다: {custom_raw}",
+                    retryable=False,
+                )],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
+            )
+
+        patterns: List[Tuple[str, str]] = list(DEFAULT_PATTERNS)
+        for idx, pat in enumerate(custom_raw, start=1):
+            if isinstance(pat, str):
+                patterns.append((f"사용자 정의 패턴 #{idx}", pat))
+
+        # 4) URL 안전 조합
+        base = tool_input.target.base_url.rstrip("/")
+        path = req.path.lstrip("/")
+        url = f"{base}/{path}"
+        method = req.method.upper()
+
+        # 5) headers 방어 및 auth_resolver 적용
+        orig_headers = req.headers.copy() if req.headers else {}
+        auth_ctx: AuthContext | None = tool_input.auth[0] if tool_input.auth else None
+        if auth_ctx:
+            try:
+                parse_credentials(auth_ctx)
+                auth_headers = resolve_auth_headers(auth_ctx)
+                headers = {**orig_headers, **auth_headers}
+            except CredentialResolverError as e:
+                ended_at = utc_now_iso()
+                duration_ms = int((time.time() - start_ts) * 1000)
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="Credential 해석 실패",
+                    description=str(e),
+                    evidence=[],
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
+                )
+        else:
+            headers = orig_headers
+
+        vulnerable: List[str] = []
+        invalid: List[str]    = []
+
         try:
-            # ── 입력 검증 ──
-            if tool_input.request is None:
-                ended_at = utc_now_iso()
-                return ToolResult(
-                    tool_id=self.tool_id,
-                    tool_name=self.tool_name,
-                    status=ToolStatus.SKIPPED,
-                    severity=Severity.INFO,
-                    confidence=Confidence.LOW,
-                    title="요청 정보 없음",
-                    description="request가 제공되지 않아 검사를 수행할 수 없습니다.",
-                    started_at=started_at,
-                    ended_at=ended_at,
-                )
-
-            # ── extra 옵션 추출 ──
-            custom_patterns_raw = tool_input.options.extra.get("custom_patterns", [])
-
-            if not isinstance(custom_patterns_raw, list):
-                ended_at = utc_now_iso()
-                return ToolResult(
-                    tool_id=self.tool_id,
-                    tool_name=self.tool_name,
-                    status=ToolStatus.ERROR,
-                    severity=Severity.INFO,
-                    confidence=Confidence.LOW,
-                    title="입력값 오류",
-                    description="custom_patterns는 리스트여야 합니다.",
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    errors=[
-                        build_tool_error(
-                            error_code=ErrorCode.INVALID_INPUT,
-                            error_message=f"custom_patterns 값이 유효하지 않습니다: {custom_patterns_raw}",
-                            retryable=False,
-                        )
-                    ],
-                )
-
-            # 사용자 정의 패턴 추가
-            patterns = list(DEFAULT_PATTERNS)
-            for i, pat in enumerate(custom_patterns_raw):
-                if isinstance(pat, str):
-                    patterns.append((f"사용자 정의 패턴 #{i + 1}", pat))
-
-            # ── URL 조립 ──
-            base_url = tool_input.target.base_url.rstrip("/")
-            path = tool_input.request.path
-            url = f"{base_url}{path}"
-
-            method = tool_input.request.method.upper()
-            headers = dict(tool_input.request.headers)
-            query = dict(tool_input.request.query)
-            body = tool_input.request.body
-            timeout_sec = tool_input.options.timeout / 1000
-
-            # ── 인증 헤더 주입 ──
-            if tool_input.auth:
-                auth_ctx = tool_input.auth[0]
-                if auth_ctx.auth_type == "bearer" and auth_ctx.token:
-                    headers["Authorization"] = f"Bearer {auth_ctx.token}"
-                elif auth_ctx.auth_type == "cookie" and auth_ctx.cookie:
-                    headers["Cookie"] = auth_ctx.cookie
-
-            # ── 요청 전송 ──
+            # 6) 실제 요청
             resp = requests.request(
                 method=method,
                 url=url,
                 headers=headers,
-                params=query,
-                json=body if method in ("POST", "PUT", "PATCH") else None,
-                timeout=timeout_sec,
+                params=req.query or None,
+                json=req.body if method in ("POST", "PUT", "PATCH") else None,
+                timeout=timeout_s,
+                allow_redirects=False,
+                verify=False,
             )
 
-            # 탐지용 텍스트는 MAX_SCAN_SIZE 로 제한 (성능 보호)
-            response_text = resp.text[:MAX_SCAN_SIZE]
+            # 7) 응답 텍스트 제한
+            text = resp.text[:MAX_SCAN_SIZE]
 
-            # ── 패턴 매칭 ──
-            matched: list[str] = []          # 탐지된 패턴명 목록
-            invalid_patterns: list[str] = [] # 유효하지 않은 정규식 패턴명
-
-            for pattern_name, pattern_regex in patterns:
+            # 8) 패턴 매칭
+            for name, regex in patterns:
                 try:
-                    found = re.search(pattern_regex, response_text)
-                    if found:
-                        matched.append(pattern_name)
+                    if re.search(regex, text):
+                        vulnerable.append(name)
                 except re.error:
-                    invalid_patterns.append(pattern_name)
+                    invalid.append(name)
 
-            # ── 결과 판정 ──
-            evidence = Evidence(
+            ended_at   = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+
+            # 9) Evidence 생성
+            ev = Evidence(
                 request={
                     "method": method,
                     "url": url,
                     "headers": mask_sensitive(headers),
-                    "body": sanitize_request_body(body),
+                    "body": sanitize_request_body(req.body),
                 },
                 response_status=resp.status_code,
                 response_headers=dict(resp.headers),
-                response_body_sample=sanitize_response_sample(response_text),
+                response_body_sample=sanitize_response_sample(text),
                 note="",
             )
 
-            invalid_note = (
-                f" (유효하지 않은 정규식 {len(invalid_patterns)}개 스킵: "
-                f"{', '.join(invalid_patterns)})"
-                if invalid_patterns else ""
-            )
-
-            if matched:
-                match_summary = ", ".join(matched)
-                evidence.note = (
-                    f"다음 민감 정보 패턴이 응답에서 발견되었습니다: {match_summary}{invalid_note}"
+            # 10) 취약 시
+            if vulnerable:
+                inv_note = f" (유효하지 않은 패턴 {len(invalid)}개 스킵)" if invalid else ""
+                ev.note = (
+                    f"{', '.join(vulnerable)} 패턴이 응답에서 발견됨{inv_note}"
                 )
-                ended_at = utc_now_iso()
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
-                    status=ToolStatus.VULNERABLE,
-                    severity=Severity.HIGH,
-                    confidence=Confidence.MEDIUM,
+                    status=ToolStatus.VULNERABLE.value,
+                    severity=Severity.HIGH.value,
+                    confidence=Confidence.MEDIUM.value,
                     title="민감 정보 노출 탐지",
                     description=(
-                        f"API 응답에서 민감 정보가 평문으로 노출되었습니다. "
-                        f"탐지된 패턴: {match_summary}"
+                        f"API 응답에서 민감 정보가 평문으로 노출되었습니다: "
+                        f"{', '.join(vulnerable)}"
                     ),
                     owasp=["A04 Cryptographic Failures"],
                     cwe=["CWE-319", "CWE-523"],
-                    evidence=[evidence],
+                    evidence=[ev],
                     recommendation=(
-                        "응답에서 불필요한 민감 정보를 제거하거나 마스킹하세요. "
-                        "비밀번호, API 키, 개인식별정보(PII)는 절대 응답 본문에 포함하지 마세요. "
-                        "전송 계층에서 TLS 암호화를 반드시 적용하세요."
+                        "불필요한 민감 정보는 제거 또는 마스킹하고, "
+                        "응답 본문에 PII를 제외하세요. TLS 적용 필수."
                     ),
                     started_at=started_at,
                     ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
                 )
 
-            evidence.note = f"응답에서 민감 정보 패턴이 발견되지 않았습니다.{invalid_note}"
-            ended_at = utc_now_iso()
+            # 11) PASSED
+            inv_note = f" (유효하지 않은 패턴 {len(invalid)}개 스킵)" if invalid else ""
+            ev.note = f"민감 정보 패턴 미발견{inv_note}"
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.PASSED,
-                severity=Severity.INFO,
-                confidence=Confidence.MEDIUM,
-                title="민감 정보 노출 없음",
+                status=ToolStatus.PASSED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.MEDIUM.value,
+                title="민감 정보 미노출",
                 description="API 응답에서 기본 패턴에 해당하는 민감 정보가 탐지되지 않았습니다.",
                 owasp=["A04 Cryptographic Failures"],
                 cwe=["CWE-319", "CWE-523"],
-                evidence=[evidence],
-                recommendation="민감 정보가 응답에 포함되지 않도록 정기적으로 점검하세요.",
+                evidence=[ev],
+                recommendation="정기적으로 민감 정보 노출 여부를 점검하세요.",
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
             )
 
-        except requests.exceptions.Timeout as exc:
+        except requests.Timeout as exc:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="요청 시간 초과",
-                description="대상 서버로의 요청이 시간 초과되었습니다.",
+                description=str(exc),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(exc), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.TIMEOUT,
-                        error_message=str(exc),
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        except requests.exceptions.RequestException as exc:
+        except requests.RequestException as exc:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="HTTP 요청 실패",
-                description="대상 서버로의 HTTP 요청이 실패했습니다.",
+                description=str(exc),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(exc), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.HTTP_FAILURE,
-                        error_message=str(exc),
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
         except Exception as exc:
@@ -270,18 +299,15 @@ class SensitiveDataExposureTool(BaseTool):
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="실행 오류",
                 description="예상치 못한 오류가 발생했습니다.",
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(exc), retryable=False)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.INTERNAL_ERROR,
-                        error_message=str(exc),
-                        retryable=False,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )

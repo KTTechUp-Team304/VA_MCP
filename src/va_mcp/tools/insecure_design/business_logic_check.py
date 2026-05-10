@@ -15,24 +15,24 @@ extra 옵션:
 
 from __future__ import annotations
 
-from va_mcp.core import (
-    BaseTool,
-    Confidence,
-    ErrorCode,
-    Evidence,
-    Severity,
-    ToolInput,
-    ToolResult,
-    ToolStatus,
-)
 import requests
+import time
+from typing import Any, Dict, List
 
+from va_mcp.core.base import BaseTool
+from va_mcp.core.schemas import ToolInput, ToolResult, Evidence, AuthContext
+from va_mcp.core.constants import ToolStatus, Severity, Confidence, ErrorCode
 from va_mcp.core.utils import (
     build_tool_error,
     mask_sensitive,
     sanitize_request_body,
     sanitize_response_sample,
     utc_now_iso,
+)
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
 )
 
 
@@ -43,266 +43,310 @@ class BusinessLogicCheckTool(BaseTool):
     - 모든 비정상 값에 400/422 응답: PASSED (값 검증 존재)
     - 비정상 값이 200으로 수락됨:    VULNERABLE (값 검증 미존재)
     """
-
     tool_id = "business_logic_check"
     tool_name = "Business Logic Check"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts   = time.time()
         started_at = utc_now_iso()
 
+        # 1) request 방어
+        req = tool_input.request
+        if not req:
+            ended_at   = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="요청 정보 없음",
+                description="request가 제공되지 않아 검사를 수행할 수 없습니다.",
+                evidence=[],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
+            )
+
+        # 2) method 방어
+        method = req.method.upper()
+        if method not in ("POST", "PUT", "PATCH"):
+            ended_at   = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="검사 대상 아님",
+                description="Business Logic Check는 POST, PUT, PATCH 메서드에만 적용됩니다.",
+                evidence=[],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
+            )
+
+        # 3) safe_mode 방어
+        opts: Any = tool_input.options
+        safe_mode = getattr(opts, "safe_mode", False)
+        if safe_mode:
+            ended_at   = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="Safe Mode 활성화",
+                description="safe_mode=True 상태에서는 비정상 값 전송을 수행하지 않습니다.",
+                evidence=[],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
+            )
+
+        # 4) options/extra 방어
+        extra: Dict[str, Any] = opts.extra if opts and opts.extra else {}
+        timeout_s = (opts.timeout / 1000.0) if opts and opts.timeout else 5
+
+        test_field = extra.get("test_field", "amount")
+        invalid_values = extra.get("invalid_values", [-1, 0, -9999])
+
+        # 5) invalid_values 검증
+        if not isinstance(invalid_values, list) or not invalid_values:
+            ended_at   = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="입력값 오류",
+                description="invalid_values는 1개 이상의 값을 포함하는 리스트여야 합니다.",
+                evidence=[],
+                errors=[build_tool_error(
+                    ErrorCode.INVALID_INPUT.value,
+                    f"invalid_values 값이 유효하지 않습니다: {invalid_values!r}",
+                    retryable=False,
+                )],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
+            )
+
+        # 6) test_field 검증
+        if not isinstance(test_field, str) or not test_field.strip():
+            ended_at   = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="입력값 오류",
+                description="test_field는 비어 있지 않은 문자열이어야 합니다.",
+                evidence=[],
+                errors=[build_tool_error(
+                    ErrorCode.INVALID_INPUT.value,
+                    f"test_field 값이 유효하지 않습니다: {test_field!r}",
+                    retryable=False,
+                )],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
+            )
+
+        # 7) URL 안전 조합
+        base = tool_input.target.base_url.rstrip("/")
+        path = req.path.lstrip("/")
+        url  = f"{base}/{path}"
+
+        headers = req.headers.copy() if req.headers else {}
+
+        # 8) auth_resolver로 인증 헤더 처리
+        auth_ctx: AuthContext | None = tool_input.auth[0] if tool_input.auth else None
+        if auth_ctx:
+            try:
+                parse_credentials(auth_ctx)
+                auth_headers = resolve_auth_headers(auth_ctx)
+                headers = {**headers, **auth_headers}
+            except CredentialResolverError as e:
+                ended_at   = utc_now_iso()
+                duration_ms = int((time.time() - start_ts) * 1000)
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="Credential 해석 실패",
+                    description=str(e),
+                    evidence=[],
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
+                )
+
+        # 9) 원본 body 복사
+        orig_body = req.body.copy() if req.body else {}
+
+        accepted: List[Evidence] = []
+        rejected: List[Evidence] = []
+
         try:
-            # ── 입력 검증 ──
-            if tool_input.request is None:
-                ended_at = utc_now_iso()
-                return ToolResult(
-                    tool_id=self.tool_id,
-                    tool_name=self.tool_name,
-                    status=ToolStatus.SKIPPED,
-                    severity=Severity.INFO,
-                    confidence=Confidence.LOW,
-                    title="요청 정보 없음",
-                    description="request가 제공되지 않아 검사를 수행할 수 없습니다.",
-                    started_at=started_at,
-                    ended_at=ended_at,
-                )
-
-            if tool_input.request.method.upper() not in ("POST", "PUT", "PATCH"):
-                ended_at = utc_now_iso()
-                return ToolResult(
-                    tool_id=self.tool_id,
-                    tool_name=self.tool_name,
-                    status=ToolStatus.SKIPPED,
-                    severity=Severity.INFO,
-                    confidence=Confidence.LOW,
-                    title="검사 대상 아님",
-                    description="Business Logic Check는 POST, PUT, PATCH 메서드에만 적용됩니다.",
-                    started_at=started_at,
-                    ended_at=ended_at,
-                )
-
-            # ── safe_mode 체크 ──
-            if tool_input.options.safe_mode:
-                ended_at = utc_now_iso()
-                return ToolResult(
-                    tool_id=self.tool_id,
-                    tool_name=self.tool_name,
-                    status=ToolStatus.SKIPPED,
-                    severity=Severity.INFO,
-                    confidence=Confidence.LOW,
-                    title="Safe Mode 활성화",
-                    description="safe_mode=True 상태에서는 비정상 값 전송을 수행하지 않습니다.",
-                    started_at=started_at,
-                    ended_at=ended_at,
-                )
-
-            # ── extra 옵션 추출 ──
-            test_field = tool_input.options.extra.get("test_field", "amount")
-            invalid_values = tool_input.options.extra.get("invalid_values", [-1, 0, -9999])
-
-            if not isinstance(invalid_values, list) or len(invalid_values) == 0:
-                ended_at = utc_now_iso()
-                return ToolResult(
-                    tool_id=self.tool_id,
-                    tool_name=self.tool_name,
-                    status=ToolStatus.ERROR,
-                    severity=Severity.INFO,
-                    confidence=Confidence.LOW,
-                    title="입력값 오류",
-                    description="invalid_values는 1개 이상의 값을 포함하는 리스트여야 합니다.",
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    errors=[
-                        build_tool_error(
-                            error_code=ErrorCode.INVALID_INPUT,
-                            error_message=f"invalid_values 값이 유효하지 않습니다: {invalid_values}",
-                            retryable=False,
-                        )
-                    ],
-                )
-
-            if not isinstance(test_field, str) or not test_field.strip():
-                ended_at = utc_now_iso()
-                return ToolResult(
-                    tool_id=self.tool_id,
-                    tool_name=self.tool_name,
-                    status=ToolStatus.ERROR,
-                    severity=Severity.INFO,
-                    confidence=Confidence.LOW,
-                    title="입력값 오류",
-                    description="test_field는 비어 있지 않은 문자열이어야 합니다.",
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    errors=[
-                        build_tool_error(
-                            error_code=ErrorCode.INVALID_INPUT,
-                            error_message=f"test_field 값이 유효하지 않습니다: {test_field!r}",
-                            retryable=False,
-                        )
-                    ],
-                )
-
-            # ── URL 조립 ──
-            base_url = tool_input.target.base_url.rstrip("/")
-            path = tool_input.request.path
-            url = f"{base_url}{path}"
-
-            method = tool_input.request.method.upper()
-            headers = dict(tool_input.request.headers)
-            timeout_sec = tool_input.options.timeout / 1000
-
-            # ── 인증 헤더 주입 ──
-            if tool_input.auth:
-                auth_ctx = tool_input.auth[0]
-                if auth_ctx.auth_type == "bearer" and auth_ctx.token:
-                    headers["Authorization"] = f"Bearer {auth_ctx.token}"
-                elif auth_ctx.auth_type == "cookie" and auth_ctx.cookie:
-                    headers["Cookie"] = auth_ctx.cookie
-
-            original_body = dict(tool_input.request.body) if tool_input.request.body else {}
-
-            # ── 비정상 값 순차 전송 ──
-            accepted_evidences: list[Evidence] = []
-            rejected_evidences: list[Evidence] = []
-
-            for invalid_val in invalid_values:
-                test_body = {**original_body, test_field: invalid_val}
-
-                resp = requests.request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    json=test_body,
-                    timeout=timeout_sec,
-                )
-
-                evidence = Evidence(
-                    request={
-                        "method": method,
+            # 10) 비정상 값 순차 전송
+            for invalid in invalid_values:
+                if req.method.upper() in ("POST", "PUT", "PATCH"):
+                    test_body = {**orig_body, test_field: invalid}
+                    resp = requests.request(
+                        req.method.upper(),
+                        url,
+                        headers=headers,
+                        json=test_body,
+                        timeout=timeout_s,
+                        allow_redirects=False,
+                    )
+                    req_info = {
+                        "method": req.method.upper(),
                         "url": url,
                         "headers": mask_sensitive(headers),
                         "body": sanitize_request_body(test_body),
-                    },
+                    }
+                else:
+                    # GET 등은 비정상 body 검사 대상 아님
+                    break
+
+                evidence = Evidence(
+                    request=req_info,
                     response_status=resp.status_code,
                     response_headers=dict(resp.headers),
                     response_body_sample=sanitize_response_sample(resp.text),
                     note=(
-                        f"필드 '{test_field}'에 비정상 값 {invalid_val!r} 전송 → "
+                        f"필드 '{test_field}'에 비정상 값 {invalid!r} 전송 → "
                         f"응답 코드: {resp.status_code}"
                     ),
                 )
 
                 if resp.status_code in (400, 422):
-                    rejected_evidences.append(evidence)
+                    rejected.append(evidence)
                 else:
-                    accepted_evidences.append(evidence)
+                    accepted.append(evidence)
 
-            # ── 결과 판정 ──
-            if accepted_evidences:
-                ended_at = utc_now_iso()
+            ended_at   = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+
+            # 11) 결과 판정
+            if accepted:
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
-                    status=ToolStatus.VULNERABLE,
-                    severity=Severity.HIGH,
-                    confidence=Confidence.HIGH,
+                    status=ToolStatus.VULNERABLE.value,
+                    severity=Severity.HIGH.value,
+                    confidence=Confidence.HIGH.value,
                     title="비즈니스 로직 값 검증 미흡",
                     description=(
-                        f"필드 '{test_field}'에 비정상 값을 전송하였으나 서버가 이를 수락하였습니다. "
-                        f"({len(accepted_evidences)}/{len(invalid_values)}건 수락) "
-                        f"비즈니스 로직 수준의 값 검증이 부재하거나 불완전합니다."
+                        f"필드 '{test_field}'에 비정상 값을 전송하였으나 "
+                        f"{len(accepted)}/{len(invalid_values)}건이 수락되었습니다."
                     ),
                     owasp=["A06 Insecure Design"],
                     cwe=["CWE-840"],
-                    evidence=accepted_evidences,
+                    evidence=accepted,
                     recommendation=(
-                        f"'{test_field}' 필드에 대해 서버 측 비즈니스 로직 유효성 검사를 추가하세요. "
-                        "예: 음수 불가, 최소/최대 범위 제한 등. "
-                        "클라이언트 측 검증만으로는 충분하지 않습니다."
+                        f"'{test_field}' 필드에 대한 서버 측 비즈니스 로직 유효성 검사를 강화하세요."
                     ),
                     started_at=started_at,
                     ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
                 )
 
-            ended_at = utc_now_iso()
+            # PASSED: 모두 거부
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.PASSED,
-                severity=Severity.INFO,
-                confidence=Confidence.HIGH,
+                status=ToolStatus.PASSED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.HIGH.value,
                 title="비즈니스 로직 값 검증 적용됨",
                 description=(
-                    f"필드 '{test_field}'에 비정상 값을 전송하였으며, "
-                    f"모든 요청({len(invalid_values)}건)이 400/422로 거부되었습니다. "
-                    f"서버에 비즈니스 로직 값 검증이 적용되어 있습니다."
+                    f"필드 '{test_field}'에 전송된 모든 비정상 값 "
+                    f"({len(invalid_values)}건)이 400/422로 거부되었습니다."
                 ),
                 owasp=["A06 Insecure Design"],
                 cwe=["CWE-840"],
-                evidence=rejected_evidences,
-                recommendation="현재 값 검증이 적용되어 있습니다. 검증 범위와 오류 메시지 노출 수준을 주기적으로 검토하세요.",
+                evidence=rejected,
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
             )
 
-        except requests.exceptions.Timeout as exc:
+        except requests.Timeout as exc:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="요청 시간 초과",
-                description="대상 서버로의 요청이 시간 초과되었습니다.",
+                description=str(exc),
+                evidence=[],
+                errors=[build_tool_error(
+                    ErrorCode.TIMEOUT.value, str(exc), retryable=True
+                )],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.TIMEOUT,
-                        error_message=str(exc),
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
-
-        except requests.exceptions.RequestException as exc:
+        except requests.RequestException as exc:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="HTTP 요청 실패",
-                description="대상 서버로의 HTTP 요청이 실패했습니다.",
+                description=str(exc),
+                evidence=[],
+                errors=[build_tool_error(
+                    ErrorCode.HTTP_FAILURE.value, str(exc), retryable=True
+                )],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.HTTP_FAILURE,
-                        error_message=str(exc),
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
-
         except Exception as exc:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="실행 오류",
-                description="예상치 못한 오류가 발생했습니다.",
+                description=str(exc),
+                evidence=[],
+                errors=[build_tool_error(
+                    ErrorCode.INTERNAL_ERROR.value, str(exc), retryable=False
+                )],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.INTERNAL_ERROR,
-                        error_message=str(exc),
-                        retryable=False,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
