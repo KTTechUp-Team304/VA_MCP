@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from va_mcp.core.endpoint_profile import EndpointProfile
+from va_mcp.endpoint_profile import EndpointProfile
 from va_mcp.core.feature_set import FeatureSet
 
 # ------------------------------------------------------------------ #
