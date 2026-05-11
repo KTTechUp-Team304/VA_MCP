@@ -5,6 +5,8 @@ from __future__ import annotations
 #                              (기본값: DEFAULT_DEBUG_PATHS)
 
 import requests
+import time
+from typing import Any, Dict, List
 
 from va_mcp.core import (
     AuthContext,
@@ -22,6 +24,11 @@ from va_mcp.core.utils import (
     mask_sensitive,
     sanitize_response_sample,
     utc_now_iso,
+)
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
 )
 
 DEFAULT_DEBUG_PATHS = [
@@ -47,201 +54,192 @@ DEFAULT_DEBUG_PATHS = [
 
 # 접근 가능(200) 판정 상태 코드
 _ACCESSIBLE_STATUS = {200}
-# 존재하지만 차단(403/401) 판정 상태 코드
+# 존재하지만 차단(401/403) 판정 상태 코드
 _EXISTS_STATUS = {401, 403}
 
 
 class DebugEndpointTool(BaseTool):
-    """
-    운영 환경에 노출된 디버그 및 관리용 엔드포인트를 탐지하는 도구.
-    /actuator, /swagger-ui, /console 등 주요 경로에 요청을 보내며,
-    HTTP 200이면 HIGH, 401/403이면 엔드포인트 존재 확인으로 MEDIUM을 판정한다.
-    """
-
     tool_id = "debug_endpoint"
     tool_name = "Debug Endpoint Detection"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts = time.time()
         started_at = utc_now_iso()
 
-        if tool_input.request is None:
+        # 1) request 방어
+        req = tool_input.request
+        if not req:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.SKIPPED,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="요청 정보 없음",
                 description="request가 제공되지 않아 점검을 건너뜁니다.",
                 evidence=[],
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        timeout_sec = tool_input.options.timeout / 1000.0
-        max_req = tool_input.options.max_requests
-        debug_paths = tool_input.options.extra.get(
-            "debug_paths", list(DEFAULT_DEBUG_PATHS)
-        )
+        # 2) options/extra 방어
+        opts = tool_input.options
+        extra: Dict[str, Any] = opts.extra if opts and opts.extra else {}
+        timeout_s = (opts.timeout / 1000.0) if opts and opts.timeout else 5
+        max_req = opts.max_requests if opts and opts.max_requests is not None else len(DEFAULT_DEBUG_PATHS)
+        debug_paths: List[str] = extra.get("debug_paths", DEFAULT_DEBUG_PATHS)
 
-        base_url = tool_input.target.base_url
-        request_headers = dict(tool_input.request.headers)
+        # 3) URL 기본 준비
+        base = tool_input.target.base_url.rstrip("/")
+        req_headers = req.headers or {}
 
-        if tool_input.auth:
-            auth: AuthContext = tool_input.auth[0]
-            if auth.auth_type == "bearer" and auth.token:
-                request_headers["Authorization"] = f"Bearer {auth.token}"
-            elif auth.auth_type == "cookie" and auth.cookie:
-                request_headers["Cookie"] = auth.cookie
-            elif auth.auth_type == "api_key" and auth.token:
-                request_headers["X-API-Key"] = auth.token
-
-        try:
-            vulnerable_evidence: list[Evidence] = []
-
-            for path in debug_paths[:max_req]:
-                target_url = f"{base_url}{path}"
-
-                response = requests.get(
-                    url=target_url,
-                    headers=request_headers,
-                    timeout=timeout_sec,
-                    verify=False,
-                    allow_redirects=False,
-                )
-
-                if response.status_code in _ACCESSIBLE_STATUS:
-                    vulnerable_evidence.append(
-                        Evidence(
-                            request={
-                                "method": "GET",
-                                "url": target_url,
-                                "headers": mask_sensitive(request_headers),
-                            },
-                            response_status=response.status_code,
-                            response_headers=dict(response.headers),
-                            response_body_sample=sanitize_response_sample(response.text),
-                            note=f"디버그 엔드포인트 '{path}' 직접 접근 가능 (HTTP 200)",
-                        )
-                    )
-                elif response.status_code in _EXISTS_STATUS:
-                    vulnerable_evidence.append(
-                        Evidence(
-                            request={
-                                "method": "GET",
-                                "url": target_url,
-                                "headers": mask_sensitive(request_headers),
-                            },
-                            response_status=response.status_code,
-                            response_headers=dict(response.headers),
-                            response_body_sample=sanitize_response_sample(response.text),
-                            note=(
-                                f"디버그 엔드포인트 '{path}' 존재 확인 "
-                                f"(HTTP {response.status_code} - 접근 차단됨)"
-                            ),
-                        )
-                    )
-
-            ended_at = utc_now_iso()
-
-            if vulnerable_evidence:
-                has_accessible = any(
-                    e.response_status in _ACCESSIBLE_STATUS for e in vulnerable_evidence
-                )
-                severity = Severity.HIGH if has_accessible else Severity.MEDIUM
-                confidence = Confidence.HIGH if has_accessible else Confidence.MEDIUM
-
+        # 4) auth_resolver로 auth header 생성
+        auth_ctx: AuthContext | None = tool_input.auth[0] if tool_input.auth else None
+        if auth_ctx:
+            try:
+                parse_credentials(auth_ctx)
+                auth_headers = resolve_auth_headers(auth_ctx)
+            except CredentialResolverError as e:
+                ended_at = utc_now_iso()
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
-                    status=ToolStatus.VULNERABLE,
-                    severity=severity,
-                    confidence=confidence,
-                    title="디버그 엔드포인트 노출 발견",
-                    description=f"{len(vulnerable_evidence)}개의 디버그 엔드포인트가 탐지되었습니다.",
-                    owasp=["A02:2025 Security Misconfiguration"],
-                    cwe=["CWE-215"],
-                    evidence=vulnerable_evidence,
-                    recommendation=(
-                        "운영 환경에서는 디버그 및 관리용 엔드포인트를 비활성화하거나 "
-                        "IP 화이트리스트 등으로 접근을 엄격히 제한하세요."
-                    ),
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="Credential 해석 실패",
+                    description=str(e),
+                    evidence=[],
                     started_at=started_at,
                     ended_at=ended_at,
+                    duration_ms=int((time.time() - start_ts) * 1000),
+                    tool_version=self.tool_version,
+                )
+        else:
+            auth_headers = {}
+
+        vulnerable_evidence: List[Evidence] = []
+
+        try:
+            # 5) debug_paths 순회
+            for path in debug_paths[:max_req]:
+                url = f"{base}/{path.lstrip('/')}"
+                headers = {**req_headers, **auth_headers}
+
+                resp = requests.get(
+                    url=url,
+                    headers=headers,
+                    timeout=timeout_s,
+                    allow_redirects=False,
+                    verify=False,
                 )
 
-            return ToolResult(
-                tool_id=self.tool_id,
-                tool_name=self.tool_name,
-                status=ToolStatus.PASSED,
-                severity=Severity.INFO,
-                confidence=Confidence.HIGH,
-                title="디버그 엔드포인트 미노출",
-                description="점검한 경로에서 노출된 디버그 엔드포인트가 발견되지 않았습니다.",
-                started_at=started_at,
-                ended_at=ended_at,
-            )
+                status = resp.status_code
+                note: str
 
-        except requests.exceptions.Timeout:
+                if status in _ACCESSIBLE_STATUS:
+                    note = f"디버그 엔드포인트 '{path}' 직접 접근 가능 (HTTP {status})"
+                elif status in _EXISTS_STATUS:
+                    note = f"디버그 엔드포인트 '{path}' 존재 확인 (HTTP {status} - 접근 차단됨)"
+                else:
+                    continue
+
+                vulnerable_evidence.append(
+                    Evidence(
+                        request={
+                            "method": "GET",
+                            "url": url,
+                            "headers": mask_sensitive(headers),
+                        },
+                        response_status=status,
+                        response_headers=dict(resp.headers),
+                        response_body_sample=sanitize_response_sample(resp.text),
+                        note=note,
+                    )
+                )
+
+        except requests.Timeout as e:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="요청 타임아웃",
-                description="HTTP 요청이 제한 시간 내에 완료되지 않았습니다.",
+                description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.TIMEOUT,
-                        error_message=f"요청이 {timeout_sec}초 안에 완료되지 않았습니다.",
-                        retryable=True,
-                    )
-                ],
+                duration_ms=int((time.time() - start_ts) * 1000),
+                tool_version=self.tool_version,
             )
 
-        except requests.exceptions.ConnectionError as e:
+        except requests.RequestException as e:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
-                title="연결 오류",
-                description="대상 서버에 연결할 수 없습니다.",
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="HTTP 요청 실패",
+                description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.HTTP_FAILURE,
-                        error_message=str(e),
-                        retryable=True,
-                    )
-                ],
+                duration_ms=int((time.time() - start_ts) * 1000),
+                tool_version=self.tool_version,
             )
 
-        except Exception as e:
-            ended_at = utc_now_iso()
+        ended_at = utc_now_iso()
+        duration_ms = int((time.time() - start_ts) * 1000)
+
+        # 6) 결과 반환
+        if vulnerable_evidence:
+            has_access = any(e.response_status in _ACCESSIBLE_STATUS for e in vulnerable_evidence)
+            severity = Severity.HIGH if has_access else Severity.MEDIUM
+            confidence = Confidence.HIGH if has_access else Confidence.MEDIUM
+
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
-                title="도구 실행 오류",
-                description="예상치 못한 오류가 발생했습니다.",
+                status=ToolStatus.VULNERABLE.value,
+                severity=severity.value,
+                confidence=confidence.value,
+                title="디버그 엔드포인트 노출 발견",
+                description=f"{len(vulnerable_evidence)}개의 디버그 엔드포인트가 탐지되었습니다.",
+                owasp=["A02:2025 Security Misconfiguration"],
+                cwe=["CWE-215"],
+                evidence=vulnerable_evidence,
+                recommendation=(
+                    "운영 환경에서는 디버그 및 관리용 엔드포인트를 비활성화하거나 "
+                    "IP 화이트리스트 등으로 접근을 엄격히 제한하세요."
+                ),
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.INTERNAL_ERROR,
-                        error_message=str(e),
-                        retryable=False,
-                    )
-                ],
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
             )
+
+        # PASSED
+        return ToolResult(
+            tool_id=self.tool_id,
+            tool_name=self.tool_name,
+            status=ToolStatus.PASSED.value,
+            severity=Severity.INFO.value,
+            confidence=Confidence.HIGH.value,
+            title="디버그 엔드포인트 미노출",
+            description="점검한 경로에서 노출된 디버그 엔드포인트가 발견되지 않았습니다.",
+            evidence=[],
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_ms=duration_ms,
+            tool_version=self.tool_version,
+        )

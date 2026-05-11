@@ -19,6 +19,7 @@ SKIPPED 조건:
 from __future__ import annotations
 
 import requests
+from datetime import datetime
 
 from va_mcp.core import (
     AuthContext,
@@ -37,49 +38,134 @@ from va_mcp.core.utils import (
     sanitize_response_sample,
     utc_now_iso,
 )
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
+)
 
 
 class IdorBolaTool(BaseTool):
     tool_id = "idor_bola"
     tool_name = "IDOR / BOLA Testing"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         started_at = utc_now_iso()
 
+        # 1) 요청/인증 검증
         if not tool_input.request:
             return self._skipped(started_at, "request가 제공되지 않았습니다.")
         if len(tool_input.auth) < 2:
-            return self._skipped(started_at, "auth가 2개 필요합니다 (auth[0]=공격자, auth[1]=소유자).")
+            return self._skipped(
+                started_at,
+                "auth가 2개 필요합니다 (auth[0]=공격자, auth[1]=소유자).",
+            )
+
+        # 안전한 extra (planner/orchestrator 매핑용, 사용하지 않더라도 방어)
+        extra = (
+            tool_input.options.extra
+            if tool_input.options and tool_input.options.extra
+            else {}
+        )
 
         req = tool_input.request
-        base_url = tool_input.target.base_url.rstrip("/")
-        url = base_url + req.path
-        timeout_s = tool_input.options.timeout / 1000
+        base = tool_input.target.base_url.rstrip("/")
+        url = f"{base}/{req.path.lstrip('/')}"
+        timeout_s = (
+            tool_input.options.timeout / 1000
+            if tool_input.options and tool_input.options.timeout
+            else 5
+        )
 
-        attacker = tool_input.auth[0]
-        owner = tool_input.auth[1]
+        attacker: AuthContext = tool_input.auth[0]
+        owner: AuthContext    = tool_input.auth[1]
 
+        # 2) AuthContext 파싱 및 헤더 생성 (owner)
         try:
-            owner_resp = self._send(url, req.method, req.query, req.body, owner, timeout_s)
+            parse_credentials(owner)
+            owner_headers = resolve_auth_headers(owner)
+        except CredentialResolverError as e:
+            return self._skipped(
+                started_at,
+                f"Credential 해석 실패 (owner): {e}"
+            )
 
-            if owner_resp.status_code not in (200, 201, 204):
-                return self._skipped(
-                    started_at,
-                    f"소유자({owner.role}) 요청도 실패({owner_resp.status_code}). 경로 또는 소유자 토큰을 확인하세요.",
-                )
-
-            attacker_resp = self._send(url, req.method, req.query, req.body, attacker, timeout_s)
-
-        except requests.Timeout:
-            return self._error(started_at, ErrorCode.TIMEOUT, "HTTP 요청 타임아웃이 발생했습니다.", retryable=True)
+        # 3) 소유자 요청
+        try:
+            owner_resp = requests.request(
+                method=req.method,
+                url=url,
+                headers={**(req.headers or {}), **owner_headers},
+                params=req.query or None,
+                json=req.body,
+                timeout=timeout_s,
+            )
+        except requests.Timeout as e:
+            return self._error(
+                started_at,
+                ErrorCode.TIMEOUT,
+                "HTTP 요청 타임아웃이 발생했습니다.",
+                retryable=True,
+            )
         except requests.RequestException as exc:
-            return self._error(started_at, ErrorCode.HTTP_FAILURE, str(exc))
+            return self._error(
+                started_at,
+                ErrorCode.HTTP_FAILURE,
+                str(exc),
+            )
+
+        # 4) 소유자 요청 실패 시 SKIPPED
+        if owner_resp.status_code not in (200, 201, 204):
+            return self._skipped(
+                started_at,
+                f"소유자({owner.role}) 요청도 실패({owner_resp.status_code}). 경로 또는 소유자 토큰을 확인하세요.",
+            )
+
+        # 5) AuthContext 파싱 및 헤더 생성 (attacker)
+        try:
+            parse_credentials(attacker)
+            attacker_headers = resolve_auth_headers(attacker)
+        except CredentialResolverError as e:
+            return self._skipped(
+                started_at,
+                f"Credential 해석 실패 (attacker): {e}"
+            )
+
+        # 6) 공격자 요청
+        try:
+            attacker_resp = requests.request(
+                method=req.method,
+                url=url,
+                headers={**(req.headers or {}), **attacker_headers},
+                params=req.query or None,
+                json=req.body,
+                timeout=timeout_s,
+            )
+        except requests.Timeout as e:
+            return self._error(
+                started_at,
+                ErrorCode.TIMEOUT,
+                "HTTP 요청 타임아웃이 발생했습니다.",
+                retryable=True,
+            )
+        except requests.RequestException as exc:
+            return self._error(
+                started_at,
+                ErrorCode.HTTP_FAILURE,
+                str(exc),
+            )
 
         ended_at = utc_now_iso()
 
+        # 7) 취약 여부 판단
         if attacker_resp.status_code in (200, 201, 204):
-            bodies_match = attacker_resp.text.strip() == owner_resp.text.strip()
-            confidence = Confidence.HIGH if bodies_match else Confidence.MEDIUM
+            bodies_match = (
+                attacker_resp.text.strip() == owner_resp.text.strip()
+            )
+            confidence_level = (
+                Confidence.HIGH if bodies_match else Confidence.MEDIUM
+            )
 
             evidence = Evidence(
                 request={
@@ -87,7 +173,7 @@ class IdorBolaTool(BaseTool):
                     "url": url,
                     "headers": mask_sensitive(dict(attacker_resp.request.headers)),
                     "attacker_role": attacker.role,
-                    "owner_role": owner.role,
+                    "owner_role":    owner.role,
                 },
                 response_status=attacker_resp.status_code,
                 response_headers=dict(attacker_resp.headers),
@@ -103,7 +189,7 @@ class IdorBolaTool(BaseTool):
                 tool_name=self.tool_name,
                 status=ToolStatus.VULNERABLE,
                 severity=Severity.HIGH,
-                confidence=confidence,
+                confidence=confidence_level,
                 title="타 사용자 리소스 무단 접근 가능 (IDOR/BOLA)",
                 description=(
                     f"공격자({attacker.role})가 소유자({owner.role})의 리소스({req.path})에 "
@@ -118,8 +204,10 @@ class IdorBolaTool(BaseTool):
                 ),
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=0,
             )
 
+        # 8) 차단 확인
         return ToolResult(
             tool_id=self.tool_id,
             tool_name=self.tool_name,
@@ -134,39 +222,12 @@ class IdorBolaTool(BaseTool):
             cwe=["CWE-639"],
             started_at=started_at,
             ended_at=ended_at,
+            duration_ms=0,
         )
 
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
-
-    def _send(
-        self,
-        url: str,
-        method: str,
-        query: dict,
-        body: dict | None,
-        auth: AuthContext,
-        timeout_s: float,
-    ) -> requests.Response:
-        return requests.request(
-            method=method,
-            url=url,
-            headers=self._auth_headers(auth),
-            params=query or None,
-            json=body,
-            timeout=timeout_s,
-        )
-
-    def _auth_headers(self, auth: AuthContext) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        if auth.auth_type == "bearer" and auth.token:
-            headers["Authorization"] = f"Bearer {auth.token}"
-        elif auth.auth_type == "api_key" and auth.token:
-            headers["X-API-Key"] = auth.token
-        elif auth.auth_type == "cookie" and auth.cookie:
-            headers["Cookie"] = auth.cookie
-        return headers
 
     def _skipped(self, started_at: str, reason: str) -> ToolResult:
         return ToolResult(

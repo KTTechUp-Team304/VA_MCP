@@ -13,18 +13,21 @@ CWE:   CWE-319 (Cleartext Transmission of Sensitive Information)
 
 from __future__ import annotations
 
+import requests
+import time
+from typing import Any, Dict, List
+
 from va_mcp.core import (
+    AuthContext,
     BaseTool,
-    Confidence,
-    ErrorCode,
-    Evidence,
-    Severity,
     ToolInput,
     ToolResult,
+    Evidence,
     ToolStatus,
+    Severity,
+    Confidence,
+    ErrorCode,
 )
-import requests
-
 from va_mcp.core.utils import (
     build_tool_error,
     mask_sensitive,
@@ -32,18 +35,23 @@ from va_mcp.core.utils import (
     sanitize_response_sample,
     utc_now_iso,
 )
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
+)
 
 
-def _parse_cookie_attributes(set_cookie_value: str) -> dict:
-    """Set-Cookie 헤더 값을 파싱하여 속성 딕셔너리를 반환한다."""
+def _parse_cookie_attributes(set_cookie_value: str) -> Dict[str, Any]:
+    """Set-Cookie 헤더 값을 파싱하여 속성 딕셔너리를 반환합니다."""
     parts = [p.strip() for p in set_cookie_value.split(";")]
     name_value = parts[0] if parts else ""
-    cookie_name = name_value.split("=")[0].strip() if "=" in name_value else name_value
+    cookie_name = name_value.split("=", 1)[0].strip() if "=" in name_value else name_value
 
     samesite = None
     for p in parts[1:]:
         if p.lower().startswith("samesite"):
-            samesite = p.split("=")[-1].strip() if "=" in p else ""
+            samesite = p.split("=", 1)[-1].strip() if "=" in p else ""
             break
 
     return {
@@ -57,127 +65,152 @@ def _parse_cookie_attributes(set_cookie_value: str) -> dict:
 
 class CookieSecurityTool(BaseTool):
     """
-    응답의 Set-Cookie 헤더를 분석하여 보안 속성 설정 여부를 확인한다.
+    응답의 Set-Cookie 헤더를 분석하여 보안 속성 설정 여부를 확인합니다.
 
     - Secure, HttpOnly, SameSite 모두 설정됨: PASSED
     - 하나라도 누락됨:                        VULNERABLE
     - Set-Cookie 헤더 없음:                   SKIPPED
     """
-
     tool_id = "cookie_security"
     tool_name = "Cookie Security Attribute Check"
+    tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
+        start_ts   = time.time()
         started_at = utc_now_iso()
 
-        try:
-            # ── 입력 검증 ──
-            if tool_input.request is None:
-                ended_at = utc_now_iso()
-                return ToolResult(
-                    tool_id=self.tool_id,
-                    tool_name=self.tool_name,
-                    status=ToolStatus.SKIPPED,
-                    severity=Severity.INFO,
-                    confidence=Confidence.LOW,
-                    title="요청 정보 없음",
-                    description="request가 제공되지 않아 검사를 수행할 수 없습니다.",
-                    started_at=started_at,
-                    ended_at=ended_at,
-                )
-
-            # ── URL 조립 ──
-            base_url = tool_input.target.base_url.rstrip("/")
-            path = tool_input.request.path
-            url = f"{base_url}{path}"
-
-            method = tool_input.request.method.upper()
-            headers = dict(tool_input.request.headers)
-            query = dict(tool_input.request.query)
-            body = tool_input.request.body
-            timeout_sec = tool_input.options.timeout / 1000
-
-            # ── 인증 헤더 주입 ──
-            if tool_input.auth:
-                auth_ctx = tool_input.auth[0]
-                if auth_ctx.auth_type == "bearer" and auth_ctx.token:
-                    headers["Authorization"] = f"Bearer {auth_ctx.token}"
-                elif auth_ctx.auth_type == "cookie" and auth_ctx.cookie:
-                    headers["Cookie"] = auth_ctx.cookie
-
-            # ── 요청 전송 ──
-            resp = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                params=query,
-                json=body if method in ("POST", "PUT", "PATCH") else None,
-                timeout=timeout_sec,
-                allow_redirects=False,  # 리다이렉트 전 Set-Cookie도 캡처
+        # 1) request 방어
+        req = tool_input.request
+        if not req:
+            ended_at = utc_now_iso()
+            return ToolResult(
+                tool_id=self.tool_id,
+                tool_name=self.tool_name,
+                status=ToolStatus.SKIPPED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="요청 정보 없음",
+                description="request가 제공되지 않아 검사를 수행할 수 없습니다.",
+                evidence=[],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-            # ── Set-Cookie 헤더 수집 ──
-            # requests는 동일 키를 하나로 합치므로 raw headers에서 직접 수집
-            # getlist()는 urllib3 공식 API로 중복 Set-Cookie 헤더를 안정적으로 반환
-            set_cookie_headers: list[str] = resp.raw.headers.getlist("Set-Cookie")
+        # 2) options/extra 방어
+        opts: Any = tool_input.options
+        extra: Dict[str, Any] = opts.extra if opts and opts.extra else {}
+        timeout_s = (opts.timeout / 1000.0) if opts and opts.timeout else 5
 
-            if not set_cookie_headers:
+        # 3) URL 안전 조합
+        base = tool_input.target.base_url.rstrip("/")
+        path = req.path.lstrip("/")
+        url = f"{base}/{path}"
+
+        # 4) headers 방어 및 auth_resolver 적용
+        orig_headers = req.headers.copy() if req.headers else {}
+        auth_ctx: AuthContext | None = tool_input.auth[0] if tool_input.auth else None
+        if auth_ctx:
+            try:
+                parse_credentials(auth_ctx)
+                auth_headers = resolve_auth_headers(auth_ctx)
+                headers = {**orig_headers, **auth_headers}
+            except CredentialResolverError as e:
                 ended_at = utc_now_iso()
+                duration_ms = int((time.time() - start_ts) * 1000)
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
-                    status=ToolStatus.SKIPPED,
-                    severity=Severity.INFO,
-                    confidence=Confidence.LOW,
-                    title="쿠키 없음",
-                    description="응답에 Set-Cookie 헤더가 없어 쿠키 보안 속성을 검사할 수 없습니다.",
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="Credential 해석 실패",
+                    description=str(e),
+                    evidence=[],
                     started_at=started_at,
                     ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
+                )
+        else:
+            headers = orig_headers
+
+        try:
+            # 5) 요청 전송 (리다이렉트 전 Set-Cookie 캡처)
+            resp = requests.request(
+                method=req.method.upper(),
+                url=url,
+                headers=headers,
+                params=req.query or None,
+                json=req.body if req.method.upper() in ("POST", "PUT", "PATCH") else None,
+                timeout=timeout_s,
+                allow_redirects=False,
+            )
+
+            # 6) 중복 Set-Cookie 헤더 수집
+            #    urllib3 으로부터 getlist 지원
+            raw_headers = getattr(resp.raw, "headers", None)
+            set_cookie_headers: List[str] = (
+                raw_headers.getlist("Set-Cookie") if raw_headers else []
+            )
+
+            ended_at = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+
+            # 7) Set-Cookie 없으면 SKIPPED
+            if not set_cookie_headers:
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="쿠키 없음",
+                    description="응답에 Set-Cookie 헤더가 없어 검사할 수 없습니다.",
+                    evidence=[],
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
                 )
 
-            # ── 쿠키별 속성 분석 ──
-            vulnerable_cookies: list[dict] = []
-            all_cookies: list[dict] = []
-
-            for raw_cookie in set_cookie_headers:
-                parsed = _parse_cookie_attributes(raw_cookie)
+            # 8) 쿠키별 속성 분석
+            vulnerable: List[Dict[str, Any]] = []
+            all_cookies: List[Dict[str, Any]] = []
+            for raw in set_cookie_headers:
+                parsed = _parse_cookie_attributes(raw)
                 all_cookies.append(parsed)
 
-                cookie_issues: list[str] = []
-                is_samesite_none = (
+                issues: List[str] = []
+                samesite_none = (
                     parsed["samesite"] is not None
                     and parsed["samesite"].lower() == "none"
                 )
-
-                # Secure 속성 누락 — SameSite=None 케이스는 아래에서 더 구체적인 메시지로 처리
-                if not parsed["secure"] and not is_samesite_none:
-                    cookie_issues.append("Secure 속성 누락")
+                if not parsed["secure"] and not samesite_none:
+                    issues.append("Secure 속성 누락")
                 if not parsed["httponly"]:
-                    cookie_issues.append("HttpOnly 속성 누락")
+                    issues.append("HttpOnly 속성 누락")
                 if parsed["samesite"] is None:
-                    cookie_issues.append("SameSite 속성 누락")
+                    issues.append("SameSite 속성 누락")
                 elif parsed["samesite"] == "":
-                    cookie_issues.append("SameSite 속성에 값이 없음 (유효하지 않은 설정)")
-                elif is_samesite_none:
-                    if not parsed["secure"]:
-                        # Secure 없음 + SameSite=None → 평문 전송 + CSRF 위험을 하나의 메시지로 통합
-                        cookie_issues.append(
-                            "SameSite=None이고 Secure 속성이 없습니다. "
-                            "쿠키가 HTTP로 평문 전송되며 CSRF 공격에도 취약합니다."
-                        )
-                    # SameSite=None + Secure 조합은 크로스사이트 쿠키로 유효한 설정
+                    issues.append("SameSite 값 없음")
+                elif samesite_none and not parsed["secure"]:
+                    issues.append(
+                        "SameSite=None이고 Secure 속성 없음 (CSRF 위험)"
+                    )
 
-                if cookie_issues:
-                    parsed["issues"] = cookie_issues
-                    vulnerable_cookies.append(parsed)
+                if issues:
+                    parsed["issues"] = issues
+                    vulnerable.append(parsed)
 
-            # ── 결과 판정 ──
-            evidence = Evidence(
+            # 9) Evidence 생성
+            ev = Evidence(
                 request={
-                    "method": method,
+                    "method": req.method.upper(),
                     "url": url,
                     "headers": mask_sensitive(headers),
-                    "body": sanitize_request_body(body),
+                    "body": sanitize_request_body(req.body),
                 },
                 response_status=resp.status_code,
                 response_headers=dict(resp.headers),
@@ -185,125 +218,112 @@ class CookieSecurityTool(BaseTool):
                 note="",
             )
 
-            if vulnerable_cookies:
-                issues_summary = "; ".join(
+            # 10) 결과 반환
+            if vulnerable:
+                summary = "; ".join(
                     f"{c['name']}: {', '.join(c['issues'])}"
-                    for c in vulnerable_cookies
+                    for c in vulnerable
                 )
-                evidence.note = (
-                    f"{len(vulnerable_cookies)}/{len(all_cookies)}개 쿠키에서 보안 속성 누락. "
-                    f"상세: {issues_summary}"
+                ev.note = (
+                    f"{len(vulnerable)}/{len(all_cookies)}개 쿠키 보안 속성 누락: {summary}"
                 )
-                ended_at = utc_now_iso()
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
-                    status=ToolStatus.VULNERABLE,
-                    severity=Severity.MEDIUM,
-                    confidence=Confidence.HIGH,
+                    status=ToolStatus.VULNERABLE.value,
+                    severity=Severity.MEDIUM.value,
+                    confidence=Confidence.HIGH.value,
                     title="쿠키 보안 속성 누락",
                     description=(
-                        f"{len(all_cookies)}개 쿠키 중 {len(vulnerable_cookies)}개에서 "
-                        f"보안 속성이 누락되었습니다. 상세: {issues_summary}"
+                        f"{len(all_cookies)}개 쿠키 중 {len(vulnerable)}개에 "
+                        "Secure/HttpOnly/SameSite 속성이 누락되었습니다."
                     ),
                     owasp=["A04 Cryptographic Failures"],
                     cwe=["CWE-319", "CWE-523"],
-                    evidence=[evidence],
+                    evidence=[ev],
                     recommendation=(
-                        "모든 쿠키에 Secure, HttpOnly, SameSite=Strict(또는 Lax) 속성을 설정하세요. "
-                        "Secure: HTTPS 전송만 허용. "
-                        "HttpOnly: JavaScript 접근 차단(XSS 방어). "
-                        "SameSite: CSRF 공격 방어."
+                        "모든 쿠키에 Secure, HttpOnly, SameSite 속성을 설정하세요. "
+                        "HTTPS 전송 · XSS/CSRF 보호 강화 필요."
                     ),
                     started_at=started_at,
                     ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
                 )
 
-            evidence.note = (
-                f"{len(all_cookies)}개 쿠키 모두 Secure, HttpOnly, SameSite 속성이 설정되어 있습니다."
+            ev.note = (
+                f"{len(all_cookies)}개 쿠키 모두 Secure/HttpOnly/SameSite 속성이 올바르게 설정됨"
             )
-            ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.PASSED,
-                severity=Severity.INFO,
-                confidence=Confidence.HIGH,
+                status=ToolStatus.PASSED.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.HIGH.value,
                 title="쿠키 보안 속성 적용됨",
-                description=(
-                    f"{len(all_cookies)}개 쿠키 모두 Secure, HttpOnly, SameSite 속성이 "
-                    f"올바르게 설정되어 있습니다."
-                ),
+                description="모든 쿠키에 올바른 보안 속성이 설정되어 있습니다.",
                 owasp=["A04 Cryptographic Failures"],
                 cwe=["CWE-319", "CWE-523"],
-                evidence=[evidence],
+                evidence=[ev],
                 recommendation=(
-                    "현재 쿠키 보안 설정이 적절합니다. "
-                    "새로운 쿠키 추가 시에도 동일한 기준을 적용하세요."
+                    "현재 설정을 유지하고, 새로운 쿠키에도 동일한 보호 속성을 적용하세요."
                 ),
                 started_at=started_at,
                 ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=self.tool_version,
             )
 
-        except requests.exceptions.Timeout as exc:
+        except requests.Timeout as e:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
-                title="요청 시간 초과",
-                description="대상 서버로의 요청이 시간 초과되었습니다.",
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="요청 타임아웃",
+                description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.TIMEOUT.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.TIMEOUT,
-                        error_message=str(exc),
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        except requests.exceptions.RequestException as exc:
+        except requests.RequestException as e:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="HTTP 요청 실패",
-                description="대상 서버로의 HTTP 요청이 실패했습니다.",
+                description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.HTTP_FAILURE,
-                        error_message=str(exc),
-                        retryable=True,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )
 
-        except Exception as exc:
+        except Exception as e:
             ended_at = utc_now_iso()
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR,
-                severity=Severity.INFO,
-                confidence=Confidence.LOW,
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
                 title="실행 오류",
-                description="예상치 못한 오류가 발생했습니다.",
+                description=str(e),
+                evidence=[],
+                errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
                 started_at=started_at,
                 ended_at=ended_at,
-                errors=[
-                    build_tool_error(
-                        error_code=ErrorCode.INTERNAL_ERROR,
-                        error_message=str(exc),
-                        retryable=False,
-                    )
-                ],
+                duration_ms=0,
+                tool_version=self.tool_version,
             )

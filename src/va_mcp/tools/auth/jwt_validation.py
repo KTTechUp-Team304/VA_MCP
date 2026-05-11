@@ -17,6 +17,12 @@ from va_mcp.core.utils import (
     mask_sensitive,
     sanitize_response_sample,
 )
+from va_mcp.core.resolvers.auth_resolver import (
+    parse_credentials,
+    resolve_auth_headers,
+    CredentialResolverError,
+)
+
 
 class JwtValidationTool(BaseTool):
     tool_id = "auth_jwt"
@@ -45,33 +51,91 @@ class JwtValidationTool(BaseTool):
             )
 
         try:
-            # 2) JWT 토큰 획득 및 변조
-            token = tool_input.auth[0].token or ""
+            # 2) bearer AuthContext 선택
+            bearer_ctx = next(
+                (
+                    ctx for ctx in tool_input.auth
+                    if getattr(ctx, "auth_type", "").lower() == "bearer"
+                       and getattr(ctx, "token", None)
+                ),
+                None,
+            )
+            if not bearer_ctx:
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="bearer AuthContext 없음",
+                    description="auth 리스트에 bearer 타입과 token이 없습니다.",
+                    evidence=[],
+                    owasp=[],
+                    cwe=[],
+                    recommendation="bearer AuthContext를 제공하세요.",
+                    started_at=started_at,
+                    ended_at=started_at,
+                    duration_ms=0,
+                )
+
+            # 3) resolver로 토큰 파싱 및 header 생성
+            try:
+                parsed       = parse_credentials(bearer_ctx)
+            except CredentialResolverError as e:
+                ended_at = utc_now_iso()
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="Credential 해석 실패",
+                    description=str(e),
+                    evidence=[],
+                    owasp=[],
+                    cwe=[],
+                    recommendation="bearer AuthContext를 검토하세요.",
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=0,
+                )
+
+            token = parsed.get("token", "") or ""
             if not token:
                 raise ValueError("JWT 토큰이 비어 있습니다")
 
+            auth_headers_valid = resolve_auth_headers(bearer_ctx)
+
+            # 4) 변조 토큰용 context 생성
             tampered = token[:-1] + "X"
+            tampered_ctx = type("T", (), {
+                "auth_type": getattr(bearer_ctx, "auth_type", "bearer"),
+                "token": tampered
+            })()
+            auth_headers_tampered = resolve_auth_headers(tampered_ctx)
+
+            # 5) URL 준비
             url = tool_input.target.base_url + tool_input.request.path
             timeout_s = tool_input.options.timeout / 1000
 
-            headers_valid = {"Authorization": f"Bearer {token}"}
-            headers_tampered = {"Authorization": f"Bearer {tampered}"}
+            orig_headers = {}
+            orig_headers.update(auth_headers_valid)
 
-            # 3) 정상 토큰 / 변조 토큰 요청
+            # 6) 정상/변조 토큰 요청
             res_valid = requests.request(
                 method=tool_input.request.method,
                 url=url,
-                headers=headers_valid,
+                headers=orig_headers,
                 timeout=timeout_s,
             )
             res_tampered = requests.request(
                 method=tool_input.request.method,
                 url=url,
-                headers=headers_tampered,
+                headers=auth_headers_tampered,
                 timeout=timeout_s,
             )
 
-            # 4) 정상 토큰이 유효하지 않으면 테스트 불가 → SKIPPED
+            # 7) 첫 요청이 실패하면 SKIPPED
             if res_valid.status_code != 200:
                 ended_at = utc_now_iso()
                 return ToolResult(
@@ -91,12 +155,12 @@ class JwtValidationTool(BaseTool):
                     duration_ms=0,
                 )
 
-            # 5) 취약 여부 판단
+            # 8) 취약 여부 판단
             vulnerable = res_tampered.status_code == 200
 
-            # 6) 필드 셋팅
+            # 9) 결과 설정
             owasp = ["A02:2025 Cryptographic Failures"]
-            cwe = ["CWE-347"]
+            cwe   = ["CWE-347"]
             if vulnerable:
                 status = ToolStatus.VULNERABLE.value
                 severity = Severity.HIGH.value
@@ -114,13 +178,13 @@ class JwtValidationTool(BaseTool):
 
             ended_at = utc_now_iso()
 
-            # 7) 증거 생성 (변조 토큰 결과)
+            # 10) evidence 생성 (변조 토큰 결과만)
             evidence = [
                 Evidence(
                     request={
                         "method": tool_input.request.method,
                         "path": tool_input.request.path,
-                        "headers": mask_sensitive(headers_tampered),
+                        "headers": mask_sensitive(auth_headers_tampered),
                     },
                     response_status=res_tampered.status_code,
                     response_headers=mask_sensitive(dict(res_tampered.headers)),
@@ -129,7 +193,7 @@ class JwtValidationTool(BaseTool):
                 )
             ]
 
-            # 8) duration 계산
+            # 11) duration 계산
             duration_ms = int(
                 (
                     datetime.fromisoformat(ended_at.replace("Z", ""))
@@ -155,7 +219,6 @@ class JwtValidationTool(BaseTool):
                 duration_ms=duration_ms,
             )
 
-        # 8) Timeout 예외 처리
         except requests.Timeout as e:
             ended_at = utc_now_iso()
             return ToolResult(
@@ -176,7 +239,6 @@ class JwtValidationTool(BaseTool):
                 duration_ms=0,
             )
 
-        # 9) 기타 HTTP 오류 처리
         except requests.RequestException as e:
             ended_at = utc_now_iso()
             return ToolResult(
@@ -188,16 +250,12 @@ class JwtValidationTool(BaseTool):
                 title="HTTP 요청 실패",
                 description=str(e),
                 evidence=[],
-                owasp=[],
-                cwe=[],
-                recommendation="",
                 errors=[build_tool_error(ErrorCode.HTTP_FAILURE.value, str(e), retryable=True)],
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=0,
             )
 
-        # 10) 내부 오류 처리
         except Exception as e:
             ended_at = utc_now_iso()
             return ToolResult(
@@ -209,9 +267,6 @@ class JwtValidationTool(BaseTool):
                 title="JWT 테스트 오류",
                 description=str(e),
                 evidence=[],
-                owasp=[],
-                cwe=[],
-                recommendation="",
                 errors=[build_tool_error(ErrorCode.INTERNAL_ERROR.value, str(e), retryable=False)],
                 started_at=started_at,
                 ended_at=ended_at,
