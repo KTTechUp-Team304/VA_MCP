@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from va_mcp.endpoint_profile import EndpointProfile
-from va_mcp.core.feature_set import FeatureSet
+from va_mcp.feature_extractor.feature_set import FeatureSet
 
 # ------------------------------------------------------------------ #
 # 키워드 상수 — V3.1 §3 스펙 기준으로 정의

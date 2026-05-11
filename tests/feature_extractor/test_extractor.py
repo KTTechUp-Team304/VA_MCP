@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from va_mcp.endpoint_profile import EndpointProfile
-from va_mcp.core.feature_set import FeatureSet
+from va_mcp.feature_extractor.feature_set import FeatureSet
 from va_mcp.feature_extractor.extractor import FeatureExtractor
 
 
