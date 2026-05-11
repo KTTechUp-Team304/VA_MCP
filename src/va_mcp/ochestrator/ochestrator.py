@@ -1,5 +1,3 @@
-# orchestrator.py
-
 from __future__ import annotations
 
 import pkgutil
@@ -16,7 +14,7 @@ from va_mcp.core.schemas import (
 from va_mcp.endpoint_profile import EndpointProfile, SideEffect, validate_endpoint_profile
 from va_mcp.core.constants import ToolStatus, Severity, Confidence, ErrorCode
 from va_mcp.core.utils import utc_now_iso, build_tool_error
-from va_mcp.feature_extractor.feature_extractor import FeatureExtractor
+from va_mcp.feature_extractor.extractor import FeatureExtractor
 from va_mcp.planner.scenario_planner import ScenarioPlanner
 
 
