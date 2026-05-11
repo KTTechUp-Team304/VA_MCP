@@ -11,8 +11,9 @@ def test_analyze_endpoint_success_minimal():
             "path": "/health",
         }
     )
-    assert result["status"] == "parsed"
-    assert result["next_stage"] == "FeatureExtractor not implemented yet"
+    assert result["status"] == "analyzed"
+    assert "owasp_candidates" in result
+    assert "tool_ids" in result
     ep = result["endpoint_profile"]
     assert ep["method"] == "GET"
     assert ep["path"] == "/health"
@@ -27,7 +28,7 @@ def test_analyze_endpoint_normalization():
             "path": "api/v1/items",
         }
     )
-    assert result["status"] == "parsed"
+    assert result["status"] == "analyzed"
     ep = result["endpoint_profile"]
     assert ep["method"] == "POST"
     assert ep["path"] == "/api/v1/items"
