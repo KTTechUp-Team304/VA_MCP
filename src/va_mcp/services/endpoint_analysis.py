@@ -6,14 +6,16 @@ from typing import Any
 from va_mcp.endpoint_profile import EndpointProfileValidationError, parse_endpoint_profile
 from va_mcp.feature_extractor import FeatureExtractor, FeatureSet
 from va_mcp.planner.planner import ScenarioPlanner
+from va_mcp.orchestrator.orchestrator import Orchestrator
 
 _extractor = FeatureExtractor()
 _planner = ScenarioPlanner()
+_orchestrator = Orchestrator()
 
 
 def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
     """
-    EndpointProfile 파싱 → FeatureExtractor → ScenarioPlanner 순으로 실행한다.
+    EndpointProfile 파싱 → FeatureExtractor → ScenarioPlanner → Orchestrator 순으로 실행한다.
 
     need_more_context=True이면 missing 키와 함께 반환한다.
     성공 시 프로필, FeatureSet, PlannerOutput을 반환한다.
@@ -31,6 +33,11 @@ def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
                 "endpoint_profile": profile.to_serializable_dict(),
                 "feature_set": asdict(feature_set),
             }
+        
+        tool_results = _orchestrator.run_tools(
+            planner_output,
+            profile,
+        )
 
         return {
             "status": "analyzed",
@@ -38,6 +45,7 @@ def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
             "feature_set": asdict(feature_set),
             "owasp_candidates": planner_output.owasp_candidates,
             "tool_ids": planner_output.tool_ids,
+            "tool_results": [asdict(r) for r in tool_results],
         }
     except EndpointProfileValidationError as e:
         return {

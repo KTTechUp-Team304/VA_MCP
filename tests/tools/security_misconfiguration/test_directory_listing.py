@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+from requests import RequestException
 
 from va_mcp.core.schemas import ApiRequest, TargetInfo, ToolInput, ToolOptions
 from va_mcp.tools.security_misconfiguration.directory_listing import DirectoryListingTool
@@ -58,7 +59,7 @@ def test_directory_listing_vulnerable(mock_get):
 
 @patch("va_mcp.tools.security_misconfiguration.directory_listing.requests.get")
 def test_directory_listing_error(mock_get):
-    mock_get.side_effect = Exception("Mock Network Error")
+    mock_get.side_effect = RequestException("Mock Network Error")
 
     result = DirectoryListingTool().run(make_tool_input())
 

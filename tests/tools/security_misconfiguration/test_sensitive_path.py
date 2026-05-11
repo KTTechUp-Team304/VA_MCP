@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+from requests import RequestException
 
 from va_mcp.core.schemas import ApiRequest, TargetInfo, ToolInput, ToolOptions
 from va_mcp.tools.security_misconfiguration.sensitive_path import SensitivePathTool
@@ -51,7 +52,7 @@ def test_sensitive_path_vulnerable(mock_get):
 
 @patch("va_mcp.tools.security_misconfiguration.sensitive_path.requests.get")
 def test_sensitive_path_error(mock_get):
-    mock_get.side_effect = Exception("Mock Network Error")
+    mock_get.side_effect = RequestException("Mock Network Error")
 
     result = SensitivePathTool().run(make_tool_input())
 
