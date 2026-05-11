@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from va_mcp.planner.baseline import A02_BASELINE_TOOL_IDS, A10_BASELINE_TOOL_IDS
+# OWASP Top 10 2025 기준
+from va_mcp.planner.baseline import A02_BASELINE_TOOL_IDS, A04_BASELINE_TOOL_IDS, A10_BASELINE_TOOL_IDS
 
 OWASP_TOOL_MAP: dict[str, list[str]] = {
-    "A01": [
+    "A01": [  # Broken Access Control
         "idor_bola",
         "bfla",
         "rbac_check",
@@ -12,8 +13,10 @@ OWASP_TOOL_MAP: dict[str, list[str]] = {
         "parameter_tamper",
         "cors_check",
     ],
-    "A02": list(A02_BASELINE_TOOL_IDS),
-    "A03": [
+    "A02": list(A02_BASELINE_TOOL_IDS),   # Security Misconfiguration
+    "A03": [],                             # Software Supply Chain Failures (미구현)
+    "A04": list(A04_BASELINE_TOOL_IDS),   # Cryptographic Failures
+    "A05": [  # Injection
         "sql_injection",
         "cmd_injection",
         "xss_reflected",
@@ -21,22 +24,12 @@ OWASP_TOOL_MAP: dict[str, list[str]] = {
         "header_injection",
         "path_traversal",
     ],
-    "A04": [
+    "A06": [  # Insecure Design
         "rate_limit_check",
         "resource_exhaustion",
         "business_logic_check",
     ],
-    "A05": [
-        "security_headers",
-        "cors_misconfiguration",
-        "error_info_exposure",
-    ],
-    "A06": [
-        "http_method_tamper",
-        "parameter_tamper",
-        "business_logic_check",
-    ],
-    "A07": [
+    "A07": [  # Authentication Failures
         "auth_bruteforce",
         "auth_lockout",
         "auth_rate_limit",
@@ -44,12 +37,11 @@ OWASP_TOOL_MAP: dict[str, list[str]] = {
         "auth_session",
         "auth_enum",
     ],
-    "A08": [
-        "sensitive_path",
-        "directory_listing",
-        "debug_endpoint",
-        "default_config",
+    "A08": [  # Software or Data Integrity Failures
+        "http_method_tamper",
+        "parameter_tamper",
+        "business_logic_check",
     ],
-    "A09": [],
-    "A10": list(A10_BASELINE_TOOL_IDS),
+    "A09": [],                             # Security Logging and Alerting Failures (미구현)
+    "A10": list(A10_BASELINE_TOOL_IDS),   # Mishandling of Exceptional Conditions
 }
