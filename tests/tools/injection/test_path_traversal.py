@@ -35,9 +35,8 @@ def test_passed():
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.text = '{"content": "hello world"}'
-    mock_resp.headers = {"Content-Type": "application/json"}
 
-    with patch("va_mcp.tools.injection.path_traversal.http_client.get", return_value=mock_resp):
+    with patch("requests.get", return_value=mock_resp):
         result = PathTraversalTool().run(
             make_tool_input(
                 query={"file": "readme.txt"},
@@ -50,13 +49,12 @@ def test_passed():
 
 
 def test_vulnerable():
-    """/etc/passwd 내용 감지 → VULNERABLE + evidence"""
+    """/etc/passwd 내용 감지 → VULNERABLE"""
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin"
-    mock_resp.headers = {"Content-Type": "text/plain"}
+    mock_resp.text = "root:x:0:0:root:/root:/bin/bash"
 
-    with patch("va_mcp.tools.injection.path_traversal.http_client.get", return_value=mock_resp):
+    with patch("requests.get", return_value=mock_resp):
         result = PathTraversalTool().run(
             make_tool_input(
                 query={"file": "readme.txt"},
@@ -70,13 +68,12 @@ def test_vulnerable():
 
 
 def test_vulnerable_windows():
-    """win.ini 내용 감지 → VULNERABLE"""
+    """Windows 시스템 파일 감지 → VULNERABLE"""
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = "; for 16-bit app support\n[fonts]\n[extensions]"
-    mock_resp.headers = {"Content-Type": "text/plain"}
+    mock_resp.text = "[fonts]\n[extensions]"
 
-    with patch("va_mcp.tools.injection.path_traversal.http_client.get", return_value=mock_resp):
+    with patch("requests.get", return_value=mock_resp):
         result = PathTraversalTool().run(
             make_tool_input(
                 query={"file": "readme.txt"},
@@ -89,11 +86,8 @@ def test_vulnerable_windows():
 
 
 def test_error():
-    """예외 발생 → ERROR + errors"""
-    with patch(
-        "va_mcp.tools.injection.path_traversal.http_client.get",
-        side_effect=Exception("connection refused"),
-    ):
+    """예외 발생 → ERROR"""
+    with patch("requests.get", side_effect=Exception("connection refused")):
         result = PathTraversalTool().run(
             make_tool_input(
                 query={"file": "readme.txt"},

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+from requests import RequestException
 
 from va_mcp.core.schemas import ApiRequest, TargetInfo, ToolInput, ToolOptions
 from va_mcp.tools.security_misconfiguration.error_info_exposure import ErrorInfoExposureTool
@@ -51,7 +52,7 @@ def test_error_info_exposure_vulnerable(mock_request):
 
 @patch("va_mcp.tools.security_misconfiguration.error_info_exposure.requests.request")
 def test_error_info_exposure_error(mock_request):
-    mock_request.side_effect = Exception("Mock Network Error")
+    mock_request.side_effect = RequestException("Mock Network Error")
 
     result = ErrorInfoExposureTool().run(make_tool_input())
 

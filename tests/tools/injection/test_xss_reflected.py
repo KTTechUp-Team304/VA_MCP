@@ -31,13 +31,11 @@ def make_tool_input(
 
 
 def test_passed():
-    """페이로드가 반사되지 않는 정상 응답 → PASSED"""
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.text = '{"results": [], "query": "sanitized_input"}'
-    mock_resp.headers = {"Content-Type": "application/json"}
 
-    with patch("va_mcp.tools.injection.xss_reflected.http_client.get", return_value=mock_resp):
+    with patch("requests.get", return_value=mock_resp):
         result = XssReflectedTool().run(
             make_tool_input(
                 query={"q": "hello"},
@@ -50,14 +48,13 @@ def test_passed():
 
 
 def test_vulnerable():
-    """페이로드가 응답에 그대로 반사 → VULNERABLE + evidence"""
     payload = "<script>alert(1)</script>"
+
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = f'<html><body>검색 결과: {payload}</body></html>'
-    mock_resp.headers = {"Content-Type": "text/html"}
+    mock_resp.text = f"<html>{payload}</html>"
 
-    with patch("va_mcp.tools.injection.xss_reflected.http_client.get", return_value=mock_resp):
+    with patch("requests.get", return_value=mock_resp):
         result = XssReflectedTool().run(
             make_tool_input(
                 query={"q": "hello"},
@@ -72,14 +69,13 @@ def test_vulnerable():
 
 
 def test_vulnerable_img_tag():
-    """img 태그 XSS 페이로드 반사 감지"""
     payload = '<img src=x onerror=alert(1)>'
+
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = f'<html><body>{payload}</body></html>'
-    mock_resp.headers = {"Content-Type": "text/html"}
+    mock_resp.text = f"<html>{payload}</html>"
 
-    with patch("va_mcp.tools.injection.xss_reflected.http_client.get", return_value=mock_resp):
+    with patch("requests.get", return_value=mock_resp):
         result = XssReflectedTool().run(
             make_tool_input(
                 query={"q": "hello"},
@@ -91,12 +87,10 @@ def test_vulnerable_img_tag():
     assert len(result.evidence) > 0
 
 
+# ── ERROR ──────────────────────────────────────────────────
+
 def test_error():
-    """예외 발생 → ERROR + errors"""
-    with patch(
-        "va_mcp.tools.injection.xss_reflected.http_client.get",
-        side_effect=Exception("connection refused"),
-    ):
+    with patch("requests.get", side_effect=Exception("connection refused")):
         result = XssReflectedTool().run(
             make_tool_input(
                 query={"q": "hello"},
@@ -110,8 +104,9 @@ def test_error():
     assert len(result.errors) > 0
 
 
+# ── SKIP ───────────────────────────────────────────────────
+
 def test_skipped_no_params():
-    """파라미터 없으면 SKIPPED"""
     result = XssReflectedTool().run(
         make_tool_input(query={})
     )
@@ -119,15 +114,16 @@ def test_skipped_no_params():
     assert result.evidence == []
 
 
+# ── POST ───────────────────────────────────────────────────
+
 def test_vulnerable_post():
-    """POST body에서도 반사 감지"""
-    payload = '<script>alert(1)</script>'
+    payload = "<script>alert(1)</script>"
+
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = f'<html><body>입력값: {payload}</body></html>'
-    mock_resp.headers = {"Content-Type": "text/html"}
+    mock_resp.text = f"<html>입력값: {payload}</html>"
 
-    with patch("va_mcp.tools.injection.xss_reflected.http_client.request", return_value=mock_resp):
+    with patch("requests.request", return_value=mock_resp):
         result = XssReflectedTool().run(
             make_tool_input(
                 method="POST",

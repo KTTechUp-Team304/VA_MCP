@@ -35,9 +35,12 @@ def test_passed():
     mock_resp = MagicMock()
     mock_resp.status_code = 302
     mock_resp.text = ""
-    mock_resp.headers = {"Location": "https://example.com", "Content-Type": "text/html"}
+    mock_resp.headers = {
+        "Location": "https://example.com",
+        "Content-Type": "text/html",
+    }
 
-    with patch("va_mcp.tools.injection.header_injection.http_client.get", return_value=mock_resp):
+    with patch("requests.get", return_value=mock_resp):
         result = HeaderInjectionTool().run(
             make_tool_input(
                 query={"url": "https://example.com"},
@@ -60,7 +63,7 @@ def test_vulnerable_header():
         "Content-Type": "text/html",
     }
 
-    with patch("va_mcp.tools.injection.header_injection.http_client.get", return_value=mock_resp):
+    with patch("requests.get", return_value=mock_resp):
         result = HeaderInjectionTool().run(
             make_tool_input(
                 query={"url": "https://example.com"},
@@ -80,7 +83,7 @@ def test_vulnerable_body():
     mock_resp.text = "HTTP/1.1 200 OK\r\nSet-Cookie:hacked=1\r\n\r\n<html>test</html>"
     mock_resp.headers = {"Content-Type": "text/html"}
 
-    with patch("va_mcp.tools.injection.header_injection.http_client.get", return_value=mock_resp):
+    with patch("requests.get", return_value=mock_resp):
         result = HeaderInjectionTool().run(
             make_tool_input(
                 query={"url": "https://example.com"},
@@ -94,10 +97,7 @@ def test_vulnerable_body():
 
 def test_error():
     """예외 발생 → ERROR + errors"""
-    with patch(
-        "va_mcp.tools.injection.header_injection.http_client.get",
-        side_effect=Exception("connection refused"),
-    ):
+    with patch("requests.get", side_effect=Exception("connection refused")):
         result = HeaderInjectionTool().run(
             make_tool_input(
                 query={"url": "https://example.com"},
