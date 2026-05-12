@@ -74,7 +74,7 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
             params=ep.params,
             body=ep.body,
         ),
-        auth=ep.auth_contexts,
+        auth=auth_contexts,
         options=ToolOptions(
             timeout=5000,
             safe_mode=False,
