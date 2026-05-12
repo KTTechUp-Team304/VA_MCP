@@ -18,6 +18,7 @@ from va_mcp.core.schemas import (
     ToolInput,
     ToolOptions,
     ToolResult,
+    AuthContext,
 )
 from va_mcp.core.utils import build_tool_error, utc_now_iso
 from va_mcp.endpoint_profile import EndpointProfile
@@ -55,6 +56,11 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
     """
     EndpointProfile -> ToolInput 변환 어댑터
     """
+    auth_contexts = [
+        AuthContext(**ctx) if isinstance(ctx, dict) else ctx
+        for ctx in (ep.auth_contexts or [])
+    ]
+
 
     return ToolInput(
         target=TargetInfo(
@@ -71,7 +77,7 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
         auth=ep.auth_contexts,
         options=ToolOptions(
             timeout=5000,
-            safe_mode=True,
+            safe_mode=False,
             max_requests=20,
         ),
     )
