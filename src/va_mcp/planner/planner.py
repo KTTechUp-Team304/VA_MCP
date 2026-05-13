@@ -58,13 +58,21 @@ class ScenarioPlanner:
         tool_ids.extend(A02_BASELINE_TOOL_IDS)
 
         # A01: Broken Access Control
-        # requires_auth + (has_resource_identifier or auth_contexts >= 2)
+        # requires_auth + (has_resource_identifier or auth_contexts >= 2 or resource_context)
         if _get(feature_set, "requires_auth"):
             has_resource = _get(feature_set, "has_resource_identifier")
-            auth_count = _get(feature_set, "auth_contexts", 0)
-            resource_ctx = _get(feature_set, "resource_context")
 
-            if has_resource or auth_count >= 2:
+            fs_auth = _get(feature_set, "auth_contexts", 0)
+            auth_count = len(fs_auth) if isinstance(fs_auth, (list, tuple)) else int(fs_auth or 0)
+            if endpoint:
+                ep_auth = _get(endpoint, "auth_contexts", [])
+                auth_count = max(auth_count, len(ep_auth or []))
+
+            resource_ctx = _get(feature_set, "resource_context") or (
+                _get(endpoint, "resource_context") if endpoint else False
+            )
+
+            if has_resource or auth_count >= 2 or resource_ctx:
                 candidates.append("A01")
                 tool_ids.extend(OWASP_TOOL_MAP["A01"])
             else:
