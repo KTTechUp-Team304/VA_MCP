@@ -3,8 +3,8 @@ ScenarioPlanner 테스트 — OWASP Top 10 2025 기준
 
 테스트 구성:
   [baseline]
-  test_baseline_always_includes_a02_a04_a10       - 빈 FeatureSet에서도 A02/A04/A10 항상 선정
-  test_baseline_tool_ids_always_present           - A02/A04/A10 tool_ids 항상 포함
+  test_baseline_always_includes_a02_a10           - 빈 FeatureSet에서도 A02/A10 항상 선정
+  test_baseline_tool_ids_always_present           - A02/A10 tool_ids 항상 포함
 
   [A01] Broken Access Control
   test_a01_selected_by_resource_identifier        - requires_auth + has_resource_identifier → A01 선정
@@ -21,8 +21,13 @@ ScenarioPlanner 테스트 — OWASP Top 10 2025 기준
   test_a05_user_input_with_file_surface           - has_user_input + has_file_or_config_surface → A05 선정
   test_a05_not_selected_user_input_alone          - has_user_input 단독 → A05 미선정 (과탐 방지)
 
+  [A04] Cryptographic Failures
+  test_a04_secret_handling                        - has_secret_handling → A04 선정
+  test_a04_not_selected_without_secret_handling   - has_secret_handling=False → A04 미선정
+
   [A06] Insecure Design
-  test_a06_secret_handling                        - has_secret_handling → A06 선정
+  test_a06_state_changing                         - is_state_changing + has_state_field → A06 선정
+  test_a06_not_selected_partial                   - is_state_changing 단독 → A06 미선정
 
   [A07] Authentication Failures
   test_a07_login_endpoint                         - is_login_endpoint → A07 선정
@@ -30,8 +35,7 @@ ScenarioPlanner 테스트 — OWASP Top 10 2025 기준
   test_a07_requires_auth                          - requires_auth → A07 선정
 
   [A08] Software or Data Integrity Failures
-  test_a08_state_changing                         - is_state_changing + has_state_field → A08 선정
-  test_a08_not_selected_partial                   - is_state_changing 단독 → A08 미선정
+  test_a08_file_surface                           - has_file_or_config_surface → A08 선정
 
   [A09] Security Logging and Alerting Failures
   test_a09_logging_feature                        - has_logging_feature → A09 선정
@@ -53,7 +57,7 @@ from dataclasses import dataclass
 import pytest
 
 from va_mcp.planner import ScenarioPlanner
-from va_mcp.planner.baseline import A02_BASELINE_TOOL_IDS, A04_BASELINE_TOOL_IDS, A10_BASELINE_TOOL_IDS
+from va_mcp.planner.baseline import A02_BASELINE_TOOL_IDS, A10_BASELINE_TOOL_IDS
 from va_mcp.planner.rules import OWASP_TOOL_MAP
 
 
@@ -93,18 +97,17 @@ def empty_fs() -> FeatureSet:
 # baseline
 # ------------------------------------------------------------------
 
-def test_baseline_always_includes_a02_a04_a10(planner, empty_fs):
-    """FeatureSet이 비어 있어도 A02, A04, A10은 반드시 candidates에 포함된다."""
+def test_baseline_always_includes_a02_a10(planner, empty_fs):
+    """FeatureSet이 비어 있어도 A02, A10은 반드시 candidates에 포함된다."""
     out = planner.plan(empty_fs)
     assert "A02" in out.owasp_candidates
-    assert "A04" in out.owasp_candidates
     assert "A10" in out.owasp_candidates
 
 
 def test_baseline_tool_ids_always_present(planner, empty_fs):
-    """A02, A04, A10 baseline tool_ids는 조건 무관하게 항상 tool_ids에 포함된다."""
+    """A02, A10 baseline tool_ids는 조건 무관하게 항상 tool_ids에 포함된다."""
     out = planner.plan(empty_fs)
-    for tid in list(A02_BASELINE_TOOL_IDS) + list(A04_BASELINE_TOOL_IDS) + list(A10_BASELINE_TOOL_IDS):
+    for tid in list(A02_BASELINE_TOOL_IDS) + list(A10_BASELINE_TOOL_IDS):
         assert tid in out.tool_ids, f"baseline tool '{tid}' missing"
 
 
@@ -199,14 +202,39 @@ def test_a05_not_selected_user_input_alone(planner):
 
 
 # ------------------------------------------------------------------
+# A04 — Cryptographic Failures
+# ------------------------------------------------------------------
+
+def test_a04_secret_handling(planner):
+    """has_secret_handling=True → A04 선정."""
+    fs = FeatureSet(has_secret_handling=True)
+    out = planner.plan(fs)
+    assert "A04" in out.owasp_candidates
+
+
+def test_a04_not_selected_without_secret_handling(planner):
+    """has_secret_handling=False → A04 미선정."""
+    fs = FeatureSet(has_secret_handling=False)
+    out = planner.plan(fs)
+    assert "A04" not in out.owasp_candidates
+
+
+# ------------------------------------------------------------------
 # A06 — Insecure Design
 # ------------------------------------------------------------------
 
-def test_a06_secret_handling(planner):
-    """has_secret_handling=True → A06 선정."""
-    fs = FeatureSet(has_secret_handling=True)
+def test_a06_state_changing(planner):
+    """is_state_changing=True + has_state_field=True → A06 선정."""
+    fs = FeatureSet(is_state_changing=True, has_state_field=True)
     out = planner.plan(fs)
     assert "A06" in out.owasp_candidates
+
+
+def test_a06_not_selected_partial(planner):
+    """is_state_changing=True 단독 → A06 미선정."""
+    fs = FeatureSet(is_state_changing=True, has_state_field=False)
+    out = planner.plan(fs)
+    assert "A06" not in out.owasp_candidates
 
 
 # ------------------------------------------------------------------
@@ -238,18 +266,11 @@ def test_a07_requires_auth(planner):
 # A08 — Software or Data Integrity Failures
 # ------------------------------------------------------------------
 
-def test_a08_state_changing(planner):
-    """is_state_changing=True + has_state_field=True → A08 선정."""
-    fs = FeatureSet(is_state_changing=True, has_state_field=True)
+def test_a08_file_surface(planner):
+    """has_file_or_config_surface=True → A08 선정."""
+    fs = FeatureSet(has_file_or_config_surface=True)
     out = planner.plan(fs)
     assert "A08" in out.owasp_candidates
-
-
-def test_a08_not_selected_partial(planner):
-    """is_state_changing=True 단독 → A08 미선정."""
-    fs = FeatureSet(is_state_changing=True, has_state_field=False)
-    out = planner.plan(fs)
-    assert "A08" not in out.owasp_candidates
 
 
 # ------------------------------------------------------------------
@@ -273,8 +294,7 @@ def test_tool_ids_deduplicated(planner):
         requires_auth=True,
         has_resource_identifier=True,
         resource_context=True,
-        is_state_changing=True,
-        has_state_field=True,
+        has_file_or_config_surface=True,
     )
     out = planner.plan(fs)
     assert len(out.tool_ids) == len(set(out.tool_ids))
@@ -320,6 +340,7 @@ def test_full_featured_endpoint(planner):
         has_secret_handling=True,
         has_user_input=True,
         has_free_text_input=True,
+        has_file_or_config_surface=True,
         is_state_changing=True,
         has_state_field=True,
         is_login_endpoint=True,

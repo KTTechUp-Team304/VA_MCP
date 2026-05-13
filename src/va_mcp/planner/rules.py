@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # OWASP Top 10 2025 기준
-from va_mcp.planner.baseline import A02_BASELINE_TOOL_IDS, A04_BASELINE_TOOL_IDS, A10_BASELINE_TOOL_IDS
+from va_mcp.planner.baseline import A02_BASELINE_TOOL_IDS, A10_BASELINE_TOOL_IDS
 
 OWASP_TOOL_MAP: dict[str, list[str]] = {
     "A01": [  # Broken Access Control
@@ -15,7 +15,11 @@ OWASP_TOOL_MAP: dict[str, list[str]] = {
     ],
     "A02": list(A02_BASELINE_TOOL_IDS),   # Security Misconfiguration
     "A03": [],                             # Software Supply Chain Failures (미구현)
-    "A04": list(A04_BASELINE_TOOL_IDS),   # Cryptographic Failures
+    "A04": [  # Cryptographic Failures
+        "insecure_jwt",
+        "cookie_security",
+        "sensitive_data_exposure",
+    ],
     "A05": [  # Injection
         "sql_injection",
         "cmd_injection",
