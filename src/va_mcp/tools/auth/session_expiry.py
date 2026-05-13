@@ -137,7 +137,7 @@ class SessionExpiryTool(BaseTool):
                 timeout=timeout_s,
             )
 
-            if res1.status_code != 200:
+            if not (200 <= res1.status_code < 300):
                 ended_at = utc_now_iso()
                 return ToolResult(
                     tool_id=self.tool_id,
@@ -190,7 +190,7 @@ class SessionExpiryTool(BaseTool):
             )
 
             # 7) 결과 판별
-            if res2.status_code == 200:
+            if 200 <= res2.status_code < 300:    
                 status = ToolStatus.VULNERABLE.value
                 severity = Severity.MEDIUM.value
                 confidence = Confidence.MEDIUM.value
