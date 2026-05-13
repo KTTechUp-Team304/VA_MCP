@@ -12,12 +12,6 @@ A02_BASELINE_TOOL_IDS: list[str] = [  # Security Misconfiguration — baseline �
     "default_config",
 ]
 
-A04_BASELINE_TOOL_IDS: list[str] = [  # Cryptographic Failures — baseline 항상
-    "insecure_jwt",
-    "cookie_security",
-    "sensitive_data_exposure",
-]
-
 A10_BASELINE_TOOL_IDS: list[str] = [  # Mishandling of Exceptional Conditions — baseline 항상
     "stack_trace_exposure",
     "timeout_handling",

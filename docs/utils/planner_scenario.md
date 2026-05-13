@@ -66,43 +66,43 @@ EndpointProfile
 
 ---
 
-#### A02 — Cryptographic Failures (암호화 실패) — Baseline
+#### A02 — Security Misconfiguration (보안 설정 오류) — Baseline
 
 ```
 선정 조건: 조건 없음. 항상 선정.
 ```
 
-**선정 이유**: JWT, 쿠키 보안, 민감 데이터 노출은 모든 API에서 기본적으로 확인해야 하는 항목이다.
+**선정 이유**: 보안 헤더 누락, CORS 오설정, 민감 경로 노출, 디버그 엔드포인트 노출 등은 모든 API에서 기본적으로 확인해야 하는 항목이다.
 
-**매핑 툴**: `insecure_jwt`, `cookie_security`, `sensitive_data_exposure`
+**매핑 툴**: `security_headers`, `cors_misconfiguration`, `error_info_exposure`, `sensitive_path`, `directory_listing`, `debug_endpoint`, `default_config`
 
 ---
 
-#### A03 — Injection (인젝션)
+#### A03 — Software Supply Chain Failures (소프트웨어 공급망 실패)
 
 ```
 선정 조건: has_dependency_exposure = True
 ```
 
-**선정 이유**: 의존성 정보(버전, build-info 등)가 노출된 경우 해당 버전의 알려진 취약점을 통한 인젝션 공격 가능성이 높아진다.
+**선정 이유**: 의존성 정보(버전, build-info, dependency 목록 등)가 노출된 경우 해당 버전의 알려진 공급망 취약점 악용 가능성이 높아진다.
 
-**매핑 툴**: `sql_injection`, `cmd_injection`, `xss_reflected`, `ssti_injection`, `header_injection`, `path_traversal`
+**매핑 툴**: 현재 미구현 (placeholder)
 
 ---
 
-#### A04 — Insecure Design (불안전한 설계)
+#### A04 — Cryptographic Failures (암호화 실패)
 
 ```
 선정 조건: has_secret_handling = True
 ```
 
-**선정 이유**: 토큰, 시크릿, API 키, 비밀번호 재설정 등 인증 비밀정보를 처리하는 엔드포인트는 설계 단계의 취약점(레이트 리밋 미적용, 리소스 소진 등)을 확인해야 한다.
+**선정 이유**: token, secret, api-key, refresh 등 암호화가 필요한 민감 정보를 처리하는 엔드포인트에서 JWT 취약점, 쿠키 보안 속성 누락, 민감 데이터 노출을 확인해야 한다.
 
-**매핑 툴**: `rate_limit_check`, `resource_exhaustion`, `business_logic_check`
+**매핑 툴**: `insecure_jwt`, `cookie_security`, `sensitive_data_exposure`
 
 ---
 
-#### A05 — Security Misconfiguration (보안 설정 오류)
+#### A05 — Injection (인젝션)
 
 ```
 선정 조건: has_user_input = True
@@ -111,25 +111,25 @@ EndpointProfile
 주의: has_user_input 단독으로는 선정하지 않음 (과탐 방지)
 ```
 
-**선정 이유**: 단순히 입력이 있다는 것만으로는 보안 헤더·CORS 설정 오류를 테스트할 충분한 근거가 없다. 자유 텍스트 입력이나 파일/설정 관련 입력이 있을 때만 공격 표면이 충분하다고 판단한다.
+**선정 이유**: 단순히 입력이 있다는 것만으로는 인젝션 공격 표면이 충분하지 않다. 자유 텍스트 입력이나 파일/설정 관련 입력이 있을 때만 공격 페이로드를 삽입할 수 있다.
 
-**매핑 툴**: `security_headers`, `cors_misconfiguration`, `error_info_exposure`
+**매핑 툴**: `sql_injection`, `cmd_injection`, `xss_reflected`, `ssti_injection`, `header_injection`, `path_traversal`
 
 ---
 
-#### A06 — Vulnerable and Outdated Components (취약하고 오래된 컴포넌트)
+#### A06 — Insecure Design (불안전한 설계)
 
 ```
 선정 조건: is_state_changing = True AND has_state_field = True
 ```
 
-**선정 이유**: 상태를 변경하는 API(create/update/delete)에 상태 변경 필드(status, role 등)가 있을 때 비즈니스 로직 우회 공격이 가능하다.
+**선정 이유**: 상태를 변경하는 API(create/update/delete)에 상태 변경 필드(status, role 등)가 있을 때 설계 수준의 취약점(레이트 리밋 미적용, 리소스 소진, 비즈니스 로직 우회 등)을 확인해야 한다.
 
-**매핑 툴**: `http_method_tamper`, `parameter_tamper`, `business_logic_check`
+**매핑 툴**: `rate_limit_check`, `resource_exhaustion`, `business_logic_check`
 
 ---
 
-#### A07 — Identification and Authentication Failures (인증 실패)
+#### A07 — Authentication Failures (인증 실패)
 
 ```
 선정 조건: is_login_endpoint = True
@@ -143,19 +143,19 @@ EndpointProfile
 
 ---
 
-#### A08 — Software and Data Integrity Failures (소프트웨어 및 데이터 무결성 실패)
+#### A08 — Software or Data Integrity Failures (소프트웨어 및 데이터 무결성 실패)
 
 ```
 선정 조건: has_file_or_config_surface = True
 ```
 
-**선정 이유**: 파일 업로드/다운로드, 설정 내보내기/가져오기 기능이 있는 경우 민감 경로 노출, 디렉터리 목록 노출 등을 확인해야 한다.
+**선정 이유**: 파일 업로드/다운로드, 설정 내보내기/가져오기 기능이 있는 경우 HTTP 메서드 변조, 파라미터 위변조, 비즈니스 로직 우회를 통한 무결성 침해를 확인해야 한다.
 
-**매핑 툴**: `sensitive_path`, `directory_listing`, `debug_endpoint`, `default_config`
+**매핑 툴**: `http_method_tamper`, `parameter_tamper`, `business_logic_check`
 
 ---
 
-#### A09 — Security Logging and Monitoring Failures (보안 로깅 및 모니터링 실패)
+#### A09 — Security Logging and Alerting Failures (보안 로깅 및 알럿 실패)
 
 ```
 선정 조건: has_logging_feature = True
@@ -167,13 +167,13 @@ EndpointProfile
 
 ---
 
-#### A10 — Server-Side Request Forgery (서버 측 요청 위조) — Baseline
+#### A10 — Mishandling of Exceptional Conditions (예외 처리 부적절) — Baseline
 
 ```
 선정 조건: 조건 없음. 항상 선정.
 ```
 
-**선정 이유**: 예외 처리 및 오류 응답 일관성은 모든 API에서 기본적으로 확인해야 하는 항목이다.
+**선정 이유**: 타임아웃 처리, 에러 응답 일관성, 비정상 입력 방어는 모든 API에서 기본적으로 확인해야 하는 항목이다.
 
 **매핑 툴**: `stack_trace_exposure`, `timeout_handling`, `error_code_consistency`, `retry_handling`, `malformed_input`
 
@@ -201,7 +201,7 @@ EndpointProfile
 
 ### 2.4 tool_ids 중복 제거 및 순서 보존
 
-A06의 `http_method_tamper`, `parameter_tamper`는 A01에도 포함되어 있다. 여러 OWASP 카테고리가 동시에 선정될 때 동일한 tool_id가 중복될 수 있으므로, `_dedup()` 함수로 **삽입 순서를 유지하면서 중복을 제거**한다.
+A08의 `http_method_tamper`, `parameter_tamper`는 A01에도 포함되어 있고, `business_logic_check`는 A06과 A08에 모두 포함되어 있다. 여러 OWASP 카테고리가 동시에 선정될 때 동일한 tool_id가 중복될 수 있으므로, `_dedup()` 함수로 **삽입 순서를 유지하면서 중복을 제거**한다.
 
 ```python
 def _dedup(ids: list[str]) -> list[str]:
@@ -225,7 +225,7 @@ PlannerOutput의 `owasp_candidates`를 순회하며 OWASP 카테고리별로 `Sc
 ```
 입력: PlannerOutput(owasp_candidates=["A02","A01","A07"], ...) + EndpointProfile
 출력: [
-  ScenarioPlan(owasp="A02", tool_ids=["insecure_jwt",...], endpoint=profile),
+  ScenarioPlan(owasp="A02", tool_ids=["security_headers",...], endpoint=profile),
   ScenarioPlan(owasp="A01", tool_ids=["idor_bola",...],   endpoint=profile),
   ScenarioPlan(owasp="A07", tool_ids=["auth_bruteforce",...], endpoint=profile),
 ]
