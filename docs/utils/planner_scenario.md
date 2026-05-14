@@ -48,19 +48,26 @@ EndpointProfile
 
 ### 2.2 OWASP 카테고리별 선정 규칙
 
+> **상세 도구 선정 기준**: `docs/utils/planner_tool_selection.md` 참고
+> 각 카테고리 내 도구는 FeatureSet 신호별 개별 조건으로 선정된다.
+
 #### A01 — Broken Access Control (접근 제어 취약점)
 
 ```
-선정 조건: requires_auth = True
-           AND (has_resource_identifier = True OR auth_contexts >= 2)
+카테고리 선정: requires_auth = True
 
-미충족 시: need_more_context = True, A01 candidates 제외
-           missing에 부족한 키 명시
-             - auth_contexts < 2 → missing에 "auth_contexts" 추가
-             - resource_context 없음 → missing에 "resource_context" 추가
+도구별 조건:
+  idor_bola       : requires_auth AND has_resource_identifier AND auth_contexts >= 2
+  bfla            : requires_auth AND (has_admin_feature OR has_role_restriction)
+  rbac_check      : requires_auth AND (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
+  forced_browsing : requires_auth (항상)
+  http_method_tamper: requires_auth AND is_state_changing
+  parameter_tamper: requires_auth AND (has_enum_input OR has_user_input)
+  cors_check      : requires_auth (항상)
+
+need_more_context: has_resource_identifier=True이지만 auth_contexts < 2인 경우
+  → missing에 "auth_contexts" 추가
 ```
-
-**선정 이유**: 접근 제어 취약점(IDOR, BFLA 등)은 인증이 필요하고 다른 사용자의 리소스에 접근 가능한 구조여야 의미 있는 테스트가 가능하다. `has_resource_identifier`가 없고 `auth_contexts`도 1개뿐이면 다른 사용자로 전환 테스트가 불가능하므로 추가 정보를 요청한다.
 
 **매핑 툴**: `idor_bola`, `bfla`, `rbac_check`, `forced_browsing`, `http_method_tamper`, `parameter_tamper`, `cors_check`
 
@@ -84,8 +91,6 @@ EndpointProfile
 선정 조건: has_dependency_exposure = True
 ```
 
-**선정 이유**: 의존성 정보(버전, build-info, dependency 목록 등)가 노출된 경우 해당 버전의 알려진 공급망 취약점 악용 가능성이 높아진다.
-
 **매핑 툴**: 현재 미구현 (placeholder)
 
 ---
@@ -93,10 +98,11 @@ EndpointProfile
 #### A04 — Cryptographic Failures (암호화 실패)
 
 ```
-선정 조건: has_secret_handling = True
+도구별 조건:
+  insecure_jwt           : has_secret_handling AND (is_login_endpoint OR requires_auth)
+  cookie_security        : is_login_endpoint OR has_secret_handling
+  sensitive_data_exposure: has_secret_handling OR returns_sensitive_data OR has_debug_feature
 ```
-
-**선정 이유**: token, secret, api-key, refresh 등 암호화가 필요한 민감 정보를 처리하는 엔드포인트에서 JWT 취약점, 쿠키 보안 속성 누락, 민감 데이터 노출을 확인해야 한다.
 
 **매핑 툴**: `insecure_jwt`, `cookie_security`, `sensitive_data_exposure`
 
@@ -105,13 +111,14 @@ EndpointProfile
 #### A05 — Injection (인젝션)
 
 ```
-선정 조건: has_user_input = True
-           AND (has_free_text_input = True OR has_file_or_config_surface = True)
-
-주의: has_user_input 단독으로는 선정하지 않음 (과탐 방지)
+도구별 조건:
+  sql_injection  : has_user_input AND (has_free_text_input OR has_enum_input)
+  cmd_injection  : has_user_input AND has_free_text_input AND (has_debug_feature OR has_file_or_config_surface)
+  xss_reflected  : has_user_input AND has_free_text_input
+  ssti_injection : has_user_input AND has_free_text_input
+  header_injection: has_user_input
+  path_traversal : has_user_input AND (has_file_or_config_surface OR has_free_text_input)
 ```
-
-**선정 이유**: 단순히 입력이 있다는 것만으로는 인젝션 공격 표면이 충분하지 않다. 자유 텍스트 입력이나 파일/설정 관련 입력이 있을 때만 공격 페이로드를 삽입할 수 있다.
 
 **매핑 툴**: `sql_injection`, `cmd_injection`, `xss_reflected`, `ssti_injection`, `header_injection`, `path_traversal`
 
@@ -120,10 +127,11 @@ EndpointProfile
 #### A06 — Insecure Design (불안전한 설계)
 
 ```
-선정 조건: is_state_changing = True AND has_state_field = True
+도구별 조건:
+  rate_limit_check   : is_state_changing
+  resource_exhaustion: is_state_changing AND has_user_input
+  business_logic_check: is_state_changing AND has_state_field
 ```
-
-**선정 이유**: 상태를 변경하는 API(create/update/delete)에 상태 변경 필드(status, role 등)가 있을 때 설계 수준의 취약점(레이트 리밋 미적용, 리소스 소진, 비즈니스 로직 우회 등)을 확인해야 한다.
 
 **매핑 툴**: `rate_limit_check`, `resource_exhaustion`, `business_logic_check`
 
@@ -132,12 +140,14 @@ EndpointProfile
 #### A07 — Authentication Failures (인증 실패)
 
 ```
-선정 조건: is_login_endpoint = True
-           OR has_credential_fields = True
-           OR requires_auth = True
+도구별 조건:
+  auth_bruteforce : is_login_endpoint OR has_credential_fields
+  auth_lockout    : is_login_endpoint OR has_credential_fields
+  auth_rate_limit : is_login_endpoint OR has_credential_fields
+  auth_jwt        : requires_auth
+  auth_session    : requires_auth
+  auth_enum       : (is_login_endpoint OR has_credential_fields) AND auth_contexts >= 2
 ```
-
-**선정 이유**: 로그인 엔드포인트이거나, 자격증명 필드가 있거나, 인증이 필요한 API라면 인증 관련 취약점(브루트포스, 잠금, JWT 위변조 등)을 반드시 확인해야 한다.
 
 **매핑 툴**: `auth_bruteforce`, `auth_lockout`, `auth_rate_limit`, `auth_jwt`, `auth_session`, `auth_enum`
 
@@ -146,10 +156,11 @@ EndpointProfile
 #### A08 — Software or Data Integrity Failures (소프트웨어 및 데이터 무결성 실패)
 
 ```
-선정 조건: has_file_or_config_surface = True
+도구별 조건:
+  http_method_tamper  : has_file_or_config_surface AND is_state_changing
+  parameter_tamper    : has_file_or_config_surface AND has_user_input
+  business_logic_check: has_file_or_config_surface AND is_state_changing
 ```
-
-**선정 이유**: 파일 업로드/다운로드, 설정 내보내기/가져오기 기능이 있는 경우 HTTP 메서드 변조, 파라미터 위변조, 비즈니스 로직 우회를 통한 무결성 침해를 확인해야 한다.
 
 **매핑 툴**: `http_method_tamper`, `parameter_tamper`, `business_logic_check`
 
@@ -161,8 +172,6 @@ EndpointProfile
 선정 조건: has_logging_feature = True
 ```
 
-**선정 이유**: 로그/감사 관련 엔드포인트는 로깅 취약점을 확인해야 한다.
-
 **매핑 툴**: 현재 미구현 (placeholder)
 
 ---
@@ -171,9 +180,8 @@ EndpointProfile
 
 ```
 선정 조건: 조건 없음. 항상 선정.
+malformed_input: has_user_input=True 시 우선 실행.
 ```
-
-**선정 이유**: 타임아웃 처리, 에러 응답 일관성, 비정상 입력 방어는 모든 API에서 기본적으로 확인해야 하는 항목이다.
 
 **매핑 툴**: `stack_trace_exposure`, `timeout_handling`, `error_code_consistency`, `retry_handling`, `malformed_input`
 
@@ -186,13 +194,12 @@ EndpointProfile
 
 발생 조건: A01 선정 시도 중 조건 미충족
   - requires_auth = True인데
-  - has_resource_identifier = False이고
+  - has_resource_identifier = True이고
   - auth_contexts < 2인 경우
 
 반환 구조:
   need_more_context = True
   missing = ["auth_contexts"]           # auth_contexts가 2 미만일 때
-           + ["resource_context"]       # resource_context가 없을 때
 
 동작:
   - ScenarioRunner는 need_more_context=True 확인 시 Orchestrator를 호출하지 않고 즉시 반환
@@ -231,7 +238,7 @@ PlannerOutput의 `owasp_candidates`를 순회하며 OWASP 카테고리별로 `Sc
 ]
 ```
 
-각 계획의 `tool_ids`는 `OWASP_TOOL_MAP`에서 해당 카테고리의 목록을 그대로 사용한다.
+각 계획의 `tool_ids`는 `PlannerOutput.tool_ids`를 그대로 사용한다. Planner가 FeatureSet 신호별 개별 조건으로 선정한 도구 목록이 담겨 있다.
 
 ### 3.2 Scenario 실행 조건
 

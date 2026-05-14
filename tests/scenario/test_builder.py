@@ -7,10 +7,11 @@ test_build_assigns_endpoint_to_every_plan        - 모든 plan에 endpoint 할�
 test_build_sets_correct_owasp_per_plan           - 각 plan의 owasp 필드가 후보와 일치
 
 [tool_ids]
-test_build_tool_ids_from_owasp_tool_map          - OWASP_TOOL_MAP 기준으로 tool_ids 설정
+test_build_tool_ids_filtered_by_owasp_tool_map   - OWASP_TOOL_MAP 기준으로 카테고리 도구만 필터링
 test_build_baseline_a02_tool_ids                 - A02 plan은 baseline tool_ids 포함
 test_build_baseline_a10_tool_ids                 - A10 plan은 baseline tool_ids 포함
 test_build_empty_tool_ids_for_a09               - A09 plan은 tool_ids 빈 목록 (미구현 placeholder)
+test_build_no_duplicate_tools_across_plans       - 동일 도구가 여러 plan에 중복 실행되지 않음
 
 [엣지 케이스]
 test_build_empty_candidates_returns_empty_list   - owasp_candidates 없으면 빈 리스트
@@ -69,10 +70,29 @@ def test_build_sets_correct_owasp_per_plan(builder, profile, baseline_output):
 # tool_ids
 # ------------------------------------------------------------------
 
-def test_build_tool_ids_from_owasp_tool_map(builder, profile):
-    output = PlannerOutput(owasp_candidates=["A01"], tool_ids=OWASP_TOOL_MAP["A01"])
+def test_build_tool_ids_filtered_by_owasp_tool_map(builder, profile):
+    """A01 plan은 PlannerOutput.tool_ids 중 OWASP_TOOL_MAP["A01"] 소속 도구만 포함한다."""
+    output = PlannerOutput(
+        owasp_candidates=["A01"],
+        tool_ids=["idor_bola", "forced_browsing", "auth_jwt"],  # auth_jwt는 A07 소속
+    )
     plans = builder.build(output, profile)
-    assert plans[0].tool_ids == OWASP_TOOL_MAP["A01"]
+    assert "idor_bola" in plans[0].tool_ids
+    assert "forced_browsing" in plans[0].tool_ids
+    assert "auth_jwt" not in plans[0].tool_ids  # A01 소속 아님
+
+
+def test_build_no_duplicate_tools_across_plans(builder, profile):
+    """동일 도구가 여러 OWASP plan에 중복 포함되지 않는다."""
+    output = PlannerOutput(
+        owasp_candidates=["A01", "A07"],
+        tool_ids=["idor_bola", "auth_jwt", "auth_session"],
+    )
+    plans = builder.build(output, profile)
+    a01_tools = plans[0].tool_ids
+    a07_tools = plans[1].tool_ids
+    overlap = set(a01_tools) & set(a07_tools)
+    assert len(overlap) == 0
 
 
 def test_build_baseline_a02_tool_ids(builder, profile, baseline_output):

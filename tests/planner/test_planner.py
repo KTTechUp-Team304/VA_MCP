@@ -10,7 +10,7 @@ ScenarioPlanner 테스트 — OWASP Top 10 2025 기준
   test_a01_selected_by_resource_identifier        - requires_auth + has_resource_identifier → A01 선정
   test_a01_selected_by_auth_contexts              - requires_auth + auth_contexts>=2 → A01 선정
   test_a01_not_selected_without_requires_auth     - requires_auth=False → A01 미선정
-  test_a01_need_more_context                      - 조건 미충족 → need_more_context=True, A01 제외
+  test_a01_need_more_context                      - 조건 미충족 → need_more_context=True, A01은 forced_browsing/cors_check으로 유지
   test_a01_missing_list_content                   - missing 리스트에 auth_contexts/resource_context 포함
 
   [A03] Software Supply Chain Failures
@@ -19,7 +19,7 @@ ScenarioPlanner 테스트 — OWASP Top 10 2025 기준
   [A05] Injection
   test_a05_user_input_with_free_text              - has_user_input + has_free_text_input → A05 선정
   test_a05_user_input_with_file_surface           - has_user_input + has_file_or_config_surface → A05 선정
-  test_a05_not_selected_user_input_alone          - has_user_input 단독 → A05 미선정 (과탐 방지)
+  test_a05_user_input_alone_only_header_injection  - has_user_input 단독 → header_injection만 선정, A05 포함
 
   [A04] Cryptographic Failures
   test_a04_secret_handling                        - has_secret_handling → A04 선정
@@ -27,7 +27,7 @@ ScenarioPlanner 테스트 — OWASP Top 10 2025 기준
 
   [A06] Insecure Design
   test_a06_state_changing                         - is_state_changing + has_state_field → A06 선정
-  test_a06_not_selected_partial                   - is_state_changing 단독 → A06 미선정
+  test_a06_state_changing_alone_rate_limit_only   - is_state_changing 단독 → rate_limit_check만 선정, A06 포함
 
   [A07] Authentication Failures
   test_a07_login_endpoint                         - is_login_endpoint → A07 선정
@@ -35,7 +35,8 @@ ScenarioPlanner 테스트 — OWASP Top 10 2025 기준
   test_a07_requires_auth                          - requires_auth → A07 선정
 
   [A08] Software or Data Integrity Failures
-  test_a08_file_surface                           - has_file_or_config_surface → A08 선정
+  test_a08_file_surface_with_state_changing       - has_file_or_config_surface + is_state_changing → A08 선정
+  test_a08_file_surface_alone_not_selected        - has_file_or_config_surface 단독 → A08 미선정
 
   [A09] Security Logging and Alerting Failures
   test_a09_logging_feature                        - has_logging_feature → A09 선정
@@ -58,7 +59,6 @@ import pytest
 
 from va_mcp.planner import ScenarioPlanner
 from va_mcp.planner.baseline import A02_BASELINE_TOOL_IDS, A10_BASELINE_TOOL_IDS
-from va_mcp.planner.rules import OWASP_TOOL_MAP
 
 
 # ------------------------------------------------------------------
@@ -81,6 +81,8 @@ class FeatureSet:
     is_login_endpoint: bool = False
     has_credential_fields: bool = False
     has_logging_feature: bool = False
+    has_admin_feature: bool = False
+    has_role_restriction: bool = False
 
 
 @pytest.fixture
@@ -116,10 +118,11 @@ def test_baseline_tool_ids_always_present(planner, empty_fs):
 # ------------------------------------------------------------------
 
 def test_a01_selected_by_resource_identifier(planner):
-    """requires_auth=True + has_resource_identifier=True → A01 선정."""
-    fs = FeatureSet(requires_auth=True, has_resource_identifier=True, resource_context=True)
+    """requires_auth=True + has_resource_identifier=True + auth_contexts>=2 → idor_bola 선정."""
+    fs = FeatureSet(requires_auth=True, has_resource_identifier=True, auth_contexts=2)
     out = planner.plan(fs)
     assert "A01" in out.owasp_candidates
+    assert "idor_bola" in out.tool_ids
     assert out.need_more_context is False
 
 
@@ -139,30 +142,66 @@ def test_a01_not_selected_without_requires_auth(planner):
     assert out.need_more_context is False
 
 
+def test_a01_vertical_selected_by_admin_feature(planner):
+    """requires_auth + has_admin_feature → bfla 선정. rbac_check는 auth_contexts>=2 필요."""
+    fs = FeatureSet(requires_auth=True, has_admin_feature=True)
+    out = planner.plan(fs)
+    assert "A01" in out.owasp_candidates
+    assert "bfla" in out.tool_ids
+    assert "rbac_check" not in out.tool_ids  # auth_contexts < 2
+
+
+def test_a01_vertical_rbac_requires_two_auth_contexts(planner):
+    """requires_auth + has_admin_feature + auth_contexts>=2 → rbac_check 선정."""
+    fs = FeatureSet(requires_auth=True, has_admin_feature=True, auth_contexts=2)
+    out = planner.plan(fs)
+    assert "rbac_check" in out.tool_ids
+
+
+def test_a01_vertical_selected_by_role_restriction(planner):
+    """requires_auth + has_role_restriction → bfla 선정. rbac_check는 auth_contexts>=2 필요."""
+    fs = FeatureSet(requires_auth=True, has_role_restriction=True)
+    out = planner.plan(fs)
+    assert "A01" in out.owasp_candidates
+    assert "bfla" in out.tool_ids
+    assert "rbac_check" not in out.tool_ids  # auth_contexts < 2
+
+
+def test_a01_bfla_not_selected_without_admin(planner):
+    """requires_auth + has_resource_identifier + auth_contexts>=2 → idor_bola 선정, bfla 미선정."""
+    fs = FeatureSet(requires_auth=True, has_resource_identifier=True, auth_contexts=2)
+    out = planner.plan(fs)
+    assert "idor_bola" in out.tool_ids
+    assert "bfla" not in out.tool_ids
+    assert "rbac_check" not in out.tool_ids
+
+
 def test_a01_need_more_context(planner):
-    """requires_auth=True인데 조건 미충족 → need_more_context=True, A01 candidates 제외."""
+    """requires_auth + has_resource_identifier이지만 auth_contexts<2.
+
+    forced_browsing/cors_check이 선정되므로 need_more_context=False.
+    missing에는 auth_contexts가 담겨 caller가 보강 여부를 판단한다.
+    """
     fs = FeatureSet(
         requires_auth=True,
-        has_resource_identifier=False,
+        has_resource_identifier=True,
         auth_contexts=1,
-        resource_context=False,
     )
     out = planner.plan(fs)
-    assert out.need_more_context is True
-    assert "A01" not in out.owasp_candidates
+    assert out.need_more_context is False
+    assert "auth_contexts" in out.missing
+    assert "A01" in out.owasp_candidates
 
 
 def test_a01_missing_list_content(planner):
-    """need_more_context 시 missing에 auth_contexts, resource_context가 포함된다."""
+    """has_resource_identifier=True인데 auth_contexts<2 → missing에 auth_contexts 포함."""
     fs = FeatureSet(
         requires_auth=True,
-        has_resource_identifier=False,
+        has_resource_identifier=True,
         auth_contexts=1,
-        resource_context=False,
     )
     out = planner.plan(fs)
     assert "auth_contexts" in out.missing
-    assert "resource_context" in out.missing
 
 
 # ------------------------------------------------------------------
@@ -194,11 +233,14 @@ def test_a05_user_input_with_file_surface(planner):
     assert "A05" in out.owasp_candidates
 
 
-def test_a05_not_selected_user_input_alone(planner):
-    """has_user_input=True 단독 → A05 미선정 (과탐 방지)."""
+def test_a05_user_input_alone_only_header_injection(planner):
+    """has_user_input=True 단독 → header_injection만 선정 (sql/cmd/xss 등은 미선정)."""
     fs = FeatureSet(has_user_input=True)
     out = planner.plan(fs)
-    assert "A05" not in out.owasp_candidates
+    assert "header_injection" in out.tool_ids
+    assert "sql_injection" not in out.tool_ids
+    assert "xss_reflected" not in out.tool_ids
+    assert "cmd_injection" not in out.tool_ids
 
 
 # ------------------------------------------------------------------
@@ -230,11 +272,13 @@ def test_a06_state_changing(planner):
     assert "A06" in out.owasp_candidates
 
 
-def test_a06_not_selected_partial(planner):
-    """is_state_changing=True 단독 → A06 미선정."""
+def test_a06_state_changing_alone_rate_limit_only(planner):
+    """is_state_changing=True 단독 → A06 선정, rate_limit_check만 포함."""
     fs = FeatureSet(is_state_changing=True, has_state_field=False)
     out = planner.plan(fs)
-    assert "A06" not in out.owasp_candidates
+    assert "A06" in out.owasp_candidates
+    assert "rate_limit_check" in out.tool_ids
+    assert "business_logic_check" not in out.tool_ids  # has_state_field 없음
 
 
 # ------------------------------------------------------------------
@@ -266,11 +310,20 @@ def test_a07_requires_auth(planner):
 # A08 — Software or Data Integrity Failures
 # ------------------------------------------------------------------
 
-def test_a08_file_surface(planner):
-    """has_file_or_config_surface=True → A08 선정."""
-    fs = FeatureSet(has_file_or_config_surface=True)
+def test_a08_file_surface_with_state_changing(planner):
+    """has_file_or_config_surface=True + is_state_changing=True → A08 선정."""
+    fs = FeatureSet(has_file_or_config_surface=True, is_state_changing=True)
     out = planner.plan(fs)
     assert "A08" in out.owasp_candidates
+    assert "http_method_tamper" in out.tool_ids
+    assert "business_logic_check" in out.tool_ids
+
+
+def test_a08_file_surface_alone_not_selected(planner):
+    """has_file_or_config_surface=True 단독 → is_state_changing, has_user_input 없으면 A08 미선정."""
+    fs = FeatureSet(has_file_or_config_surface=True)
+    out = planner.plan(fs)
+    assert "A08" not in out.owasp_candidates
 
 
 # ------------------------------------------------------------------

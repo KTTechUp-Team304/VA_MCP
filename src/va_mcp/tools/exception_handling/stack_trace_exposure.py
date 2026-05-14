@@ -153,6 +153,7 @@ class StackTraceExposureTool(BaseTool):
                     url=url,
                     headers=headers,
                     params=params,
+                    json=req.body if method in ("POST", "PUT", "PATCH") and req.body else None,
                     timeout=timeout_s,
                     allow_redirects=False,
                 )

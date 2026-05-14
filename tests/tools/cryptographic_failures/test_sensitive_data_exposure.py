@@ -16,6 +16,17 @@ SensitiveDataExposureTool 테스트.
   test_error_invalid_custom_patterns_type - custom_patterns가 list가 아니면 ERROR
   test_error_timeout                    - Timeout 발생 시 ERROR + errors
   test_error_request_fail               - RequestException 발생 시 ERROR + errors
+
+  [T-1 패턴 추가]
+  test_vulnerable_jwt_access_token      - accessToken(camelCase) JWT 값 탐지
+  test_vulnerable_jwt_refresh_token     - refreshToken JWT 값 탐지
+  test_vulnerable_password_hash_field   - passwordHash 파생 필드명 탐지
+  test_vulnerable_sha256_hash           - SHA-256 64자리 hex 값 탐지
+  test_vulnerable_bcrypt_hash           - bcrypt $2b$... 형식 탐지
+  test_vulnerable_is_sensitive_flag     - isSensitive:true 마킹 탐지
+  test_not_vulnerable_is_sensitive_false - isSensitive:false는 미탐지
+  test_vulnerable_user_id               - userId 필드 탐지
+  test_vulnerable_user_id_snake_case    - user_id snake_case 필드 탐지
 """
 
 from unittest.mock import MagicMock, patch
@@ -183,3 +194,87 @@ def test_error_request_fail():
         result = SensitiveDataExposureTool().run(make_tool_input())
     assert result.status == "error"
     assert result.errors[0].error_code == "HTTP_FAILURE"
+
+
+# ------------------------------------------------------------------
+# T-1 패턴 추가 테스트
+# ------------------------------------------------------------------
+
+def test_vulnerable_jwt_access_token():
+    """accessToken(camelCase) 필드의 JWT 값을 탐지한다 (T-1 ①)."""
+    body = '{"accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"}'
+    with patch("requests.request", return_value=mock_response(body)):
+        result = SensitiveDataExposureTool().run(make_tool_input())
+    assert result.status == "vulnerable"
+    assert "JWT 토큰" in result.description
+
+
+def test_vulnerable_jwt_refresh_token():
+    """refreshToken 필드의 JWT 값을 탐지한다 (T-1 ①)."""
+    body = '{"refreshToken": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.abc123def456ghi789jkl"}'
+    with patch("requests.request", return_value=mock_response(body)):
+        result = SensitiveDataExposureTool().run(make_tool_input())
+    assert result.status == "vulnerable"
+    assert "JWT 토큰" in result.description
+
+
+def test_vulnerable_password_hash_field():
+    """passwordHash 파생 필드명을 탐지한다 (T-1 ②)."""
+    body = '{"passwordHash": "somehashvalue1234567890abcdef"}'
+    with patch("requests.request", return_value=mock_response(body)):
+        result = SensitiveDataExposureTool().run(make_tool_input())
+    assert result.status == "vulnerable"
+    assert "비밀번호 필드 노출" in result.description
+
+
+def test_vulnerable_sha256_hash():
+    """SHA-256 64자리 hex 값을 탐지한다 (T-1 ②)."""
+    body = '{"passwordHash": "0fadf52a4580cfebb99e61162139af3d3a6403c1d36b83e4962b721d1c8cbd0b"}'
+    with patch("requests.request", return_value=mock_response(body)):
+        result = SensitiveDataExposureTool().run(make_tool_input())
+    assert result.status == "vulnerable"
+    assert "SHA-256 해시 노출" in result.description
+
+
+def test_vulnerable_bcrypt_hash():
+    """bcrypt $2b$... 형식 해시값을 탐지한다 (T-1 ②)."""
+    body = '{"hash": "$2b$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234"}'
+    with patch("requests.request", return_value=mock_response(body)):
+        result = SensitiveDataExposureTool().run(make_tool_input())
+    assert result.status == "vulnerable"
+    assert "bcrypt 해시 노출" in result.description
+
+
+def test_vulnerable_is_sensitive_flag():
+    """isSensitive:true 마킹이 있는 응답을 탐지한다 (T-1 ③)."""
+    body = '{"configKey":"secretMode","configValue":"on","isSensitive":true}'
+    with patch("requests.request", return_value=mock_response(body)):
+        result = SensitiveDataExposureTool().run(make_tool_input())
+    assert result.status == "vulnerable"
+    assert "isSensitive 마킹" in result.description
+
+
+def test_not_vulnerable_is_sensitive_false():
+    """isSensitive:false는 탐지하지 않는다 (T-1 ③)."""
+    body = '{"configKey":"publicMode","configValue":"off","isSensitive":false}'
+    with patch("requests.request", return_value=mock_response(body)):
+        result = SensitiveDataExposureTool().run(make_tool_input())
+    assert result.status == "passed"
+
+
+def test_vulnerable_user_id():
+    """userId 필드를 탐지한다 (T-1 ⑥)."""
+    body = '{"userId": 10, "errorType": "AuthError"}'
+    with patch("requests.request", return_value=mock_response(body)):
+        result = SensitiveDataExposureTool().run(make_tool_input())
+    assert result.status == "vulnerable"
+    assert "사용자 ID 노출" in result.description
+
+
+def test_vulnerable_user_id_snake_case():
+    """user_id snake_case 필드도 탐지한다 (T-1 ⑥)."""
+    body = '{"user_id": 42, "action": "login"}'
+    with patch("requests.request", return_value=mock_response(body)):
+        result = SensitiveDataExposureTool().run(make_tool_input())
+    assert result.status == "vulnerable"
+    assert "사용자 ID 노출" in result.description
