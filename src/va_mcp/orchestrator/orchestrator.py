@@ -79,6 +79,11 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
             timeout=5000,
             safe_mode=False,
             max_requests=20,
+            extra={
+                "field_mapping": {
+                    "credential_fields": ep.credential_fields
+                } if ep.credential_fields else {}
+            },
         ),
     )
 
