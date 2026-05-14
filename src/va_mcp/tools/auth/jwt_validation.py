@@ -126,12 +126,14 @@ class JwtValidationTool(BaseTool):
                 method=tool_input.request.method,
                 url=url,
                 headers=orig_headers,
+                json=tool_input.request.body if tool_input.request.body else None,  # 추가
                 timeout=timeout_s,
             )
             res_tampered = requests.request(
                 method=tool_input.request.method,
                 url=url,
                 headers=auth_headers_tampered,
+                json=tool_input.request.body if tool_input.request.body else None,  # 추가
                 timeout=timeout_s,
             )
 
