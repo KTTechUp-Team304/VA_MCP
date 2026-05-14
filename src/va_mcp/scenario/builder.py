@@ -11,13 +11,15 @@ class ScenarioPlanBuilder:
     PlannerOutput + EndpointProfile → list[ScenarioPlan].
 
     owasp_candidates의 각 항목에 대해 ScenarioPlan을 하나씩 생성한다.
-    tool_ids는 OWASP_TOOL_MAP에서 해당 카테고리의 목록을 그대로 사용한다.
+    tool_ids는 PlannerOutput.tool_ids 중 OWASP_TOOL_MAP 기준으로 해당 카테고리에
+    속하는 도구만 필터링해서 사용한다. 중복 실행을 방지하고 카테고리별 도구 분리를 유지한다.
     need_more_context=True일 때도 호출 가능하며, 상위 ScenarioRunner가 처리를 결정한다.
     """
 
     def build(self, output: PlannerOutput, profile: EndpointProfile) -> list[ScenarioPlan]:
         plans: list[ScenarioPlan] = []
         for owasp in output.owasp_candidates:
-            tool_ids = list(OWASP_TOOL_MAP.get(owasp, []))
-            plans.append(ScenarioPlan(owasp=owasp, tool_ids=tool_ids, endpoint=profile))
+            category_pool = set(OWASP_TOOL_MAP.get(owasp, []))
+            category_tools = [t for t in output.tool_ids if t in category_pool]
+            plans.append(ScenarioPlan(owasp=owasp, tool_ids=category_tools, endpoint=profile))
         return plans

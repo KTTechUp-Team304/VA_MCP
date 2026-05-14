@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 # OWASP Top 10 2025 기준
+# 카테고리별 도구 목록 상수 테이블 (참조용)
+# 실제 도구 선정은 planner.py의 개별 조건 로직에서 수행한다.
+
 from va_mcp.planner.baseline import A02_BASELINE_TOOL_IDS, A10_BASELINE_TOOL_IDS
 
 OWASP_TOOL_MAP: dict[str, list[str]] = {

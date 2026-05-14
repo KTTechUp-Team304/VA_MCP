@@ -29,6 +29,10 @@ class FeatureSet:
     has_resource_identifier: bool = False
     # userId, courseId 등 리소스 식별자가 path/body/query/params에 존재하는지 여부
 
+    has_role_restriction: bool = False
+    # 특정 역할(admin 등)만 접근 가능한 엔드포인트 여부
+    # EndpointProfile의 required_role, permission 등 메타데이터 기반
+
     # ===== 상태 =====
     is_state_changing: bool = False
     # side_effect가 create/update/delete인 경우 True
