@@ -108,6 +108,7 @@ class RetryHandlingTool(BaseTool):
                     method=method,
                     url=url,
                     headers=headers,
+                    json=req.body if method in ("POST", "PUT", "PATCH") and req.body else None,
                     timeout=timeout_s,
                     allow_redirects=False,
                     verify=False,
