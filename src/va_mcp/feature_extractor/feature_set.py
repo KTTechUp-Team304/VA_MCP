@@ -31,7 +31,7 @@ class FeatureSet:
 
     # ===== 상태 =====
     is_state_changing: bool = False
-    # side_effect가 create/update/delete인 경우 True
+    # side_effect가 create/update/delete이거나, side_effect="read"이고 HTTP 메서드가 PUT/PATCH/DELETE인 경우 True
 
     has_state_field: bool = False
     # status/role 등 상태를 변경하는 필드가 body에 존재하는지 여부
