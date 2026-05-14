@@ -144,6 +144,7 @@ class ErrorInfoExposureTool(BaseTool):
                     url=url,
                     headers=headers,
                     params=params,
+                    json=req.body if req.method.upper() in ("POST", "PUT", "PATCH") and req.body else None,
                     timeout=timeout_s,
                     allow_redirects=False,
                 )
