@@ -79,7 +79,8 @@ class ScenarioPlanner:
 
     주의:
       - Planner는 "실행 후보 선정"만 담당한다. 취약점을 확정하지 않는다.
-      - need_more_context=True는 idor_bola 실행에 필요한 정보가 부족할 때만 반환한다.
+      - need_more_context=True는 실행 가능한 도구가 없고 추가 정보가 필요한 경우에만 반환한다.
+      - missing에는 항상 부족한 컨텍스트 키가 담기며, caller가 보강 여부를 판단한다.
       - A02/A10 tool_ids는 조건 무관하게 항상 포함된다.
     """
 
@@ -275,6 +276,6 @@ class ScenarioPlanner:
         return PlannerOutput(
             owasp_candidates=candidates,
             tool_ids=_dedup(tool_ids),
-            need_more_context=bool(missing),
+            need_more_context=bool(missing) and not _dedup(tool_ids),
             missing=missing,
         )

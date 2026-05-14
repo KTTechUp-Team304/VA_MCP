@@ -177,16 +177,19 @@ def test_a01_bfla_not_selected_without_admin(planner):
 
 
 def test_a01_need_more_context(planner):
-    """requires_auth + has_resource_identifier이지만 auth_contexts<2 → need_more_context=True."""
+    """requires_auth + has_resource_identifier이지만 auth_contexts<2.
+
+    forced_browsing/cors_check이 선정되므로 need_more_context=False.
+    missing에는 auth_contexts가 담겨 caller가 보강 여부를 판단한다.
+    """
     fs = FeatureSet(
         requires_auth=True,
         has_resource_identifier=True,
         auth_contexts=1,
     )
     out = planner.plan(fs)
-    assert out.need_more_context is True
+    assert out.need_more_context is False
     assert "auth_contexts" in out.missing
-    # A01은 forced_browsing/cors_check으로 항상 선정됨
     assert "A01" in out.owasp_candidates
 
 
