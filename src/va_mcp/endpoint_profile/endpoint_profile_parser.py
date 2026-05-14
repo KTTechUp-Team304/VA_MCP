@@ -39,6 +39,7 @@ _CANONICAL_KEYS = frozenset(
         "resource_context",
         "side_effect",
         "returns_sensitive_data",
+        "credential_fields",
     }
 )
 
@@ -68,6 +69,7 @@ _ALIASES: dict[str, str] = {
     "resourceContext": "resource_context",
     "sideEffect": "side_effect",
     "returnsSensitiveData": "returns_sensitive_data",
+    "credentialFields": "credential_fields",
 }
 
 
@@ -294,6 +296,34 @@ def parse_endpoint_profile(
 
     returns_sensitive = _parse_bool(c.get("returns_sensitive_data"), False)
 
+    cred_raw = c.get("credential_fields")
+    if cred_raw is None:
+        credential_fields: dict[str, str] = {}
+    elif not isinstance(cred_raw, Mapping):
+        raise EndpointProfileValidationError(
+            [
+                ValidationIssue(
+                    "TYPE",
+                    "credential_fields",
+                    "credential_fields는 dict이거나 생략되어야 합니다",
+                )
+            ]
+        )
+    else:
+        credential_fields = {}
+        for ck, cv in cred_raw.items():
+            if not isinstance(ck, str):
+                raise EndpointProfileValidationError(
+                    [
+                        ValidationIssue(
+                            "TYPE",
+                            "credential_fields",
+                            "credential_fields의 키는 문자열이어야 합니다",
+                        )
+                    ]
+                )
+            credential_fields[ck] = "" if cv is None else str(cv)
+
     profile = EndpointProfile(
         base_url=base_url,
         method=method,
@@ -310,6 +340,7 @@ def parse_endpoint_profile(
         resource_context=resource_context,
         side_effect=side_effect,
         returns_sensitive_data=returns_sensitive,
+        credential_fields=credential_fields,
     )
     log_stage_io(
         logger,
