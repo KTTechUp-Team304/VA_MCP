@@ -287,7 +287,27 @@ class ResourceExhaustionTool(BaseTool):
                     tool_version=self.tool_version,
                 )
 
-            # 12) 200 응답 시 VULNERABLE
+            # 12) 2xx 응답 시 VULNERABLE (4xx는 인증/권한 거부이므로 스킵)
+            if not (200 <= resp.status_code < 300):
+                ended_at    = utc_now_iso()
+                duration_ms = int((time.time() - start_ts) * 1000)
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.SKIPPED.value,
+                    severity=Severity.INFO.value,
+                    confidence=Confidence.LOW.value,
+                    title="판정 불가 — 인증/권한 오류",
+                    description=(
+                        f"{resp.status_code} 응답으로 요청이 거부되어 크기 제한 여부를 판정할 수 없습니다."
+                    ),
+                    evidence=[],
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
+                )
+
             ev = Evidence(
                 request={
                     "method": req.method.upper(),
@@ -298,7 +318,7 @@ class ResourceExhaustionTool(BaseTool):
                 response_status=resp.status_code,
                 response_headers=dict(resp.headers),
                 response_body_sample=sanitize_response_sample(resp.text),
-                note="200 OK로 처리됨 — 요청 크기 제한이 없음",
+                note=f"{resp.status_code} 응답 — 요청 크기 제한이 없음",
             )
             return ToolResult(
                 tool_id=self.tool_id,

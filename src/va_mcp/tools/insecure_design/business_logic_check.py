@@ -239,10 +239,10 @@ class BusinessLogicCheckTool(BaseTool):
                     ),
                 )
 
-                if resp.status_code in (400, 422):
-                    rejected.append(evidence)
-                else:
+                if 200 <= resp.status_code < 300:
                     accepted.append(evidence)
+                else:
+                    rejected.append(evidence)
 
             ended_at   = utc_now_iso()
             duration_ms = int((time.time() - start_ts) * 1000)
@@ -282,7 +282,7 @@ class BusinessLogicCheckTool(BaseTool):
                 title="비즈니스 로직 값 검증 적용됨",
                 description=(
                     f"필드 '{test_field}'에 전송된 모든 비정상 값 "
-                    f"({len(invalid_values)}건)이 400/422로 거부되었습니다."
+                    f"({len(invalid_values)}건)이 2xx 외 응답으로 거부되었습니다."
                 ),
                 owasp=["A06 Insecure Design"],
                 cwe=["CWE-840"],
