@@ -62,13 +62,19 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
     ]
 
 
+    # O-4: path param 치환
+    resolved_path = ep.path
+    if ep.params:
+        for key, value in ep.params.items():
+            resolved_path = resolved_path.replace(f"{{{key}}}", str(value))
+
     return ToolInput(
         target=TargetInfo(
             base_url=ep.base_url,
         ),
         request=ApiRequest(
             method=ep.method,
-            path=ep.path,
+            path=resolved_path,
             headers=ep.headers,
             query=ep.query,
             params=ep.params,
