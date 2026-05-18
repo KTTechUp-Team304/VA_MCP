@@ -168,6 +168,20 @@ def validate_endpoint_profile(profile: EndpointProfile) -> None:
                         "token_json_path는 비어 있지 않아야 합니다",
                     )
                 )
+        if profile.auth.logout is not None:
+            logout = profile.auth.logout
+            if not _is_non_empty_str(logout.path):
+                issues.append(
+                    ValidationIssue("AUTH", "auth.logout.path", "logout path는 비어 있지 않아야 합니다")
+                )
+            if profile.auth.login is None:
+                issues.append(
+                    ValidationIssue(
+                        "AUTH",
+                        "auth.logout",
+                        "auth.logout이 있으면 auth.login이 필요합니다",
+                    )
+                )
 
     if profile.resource_context is not None:
         if not isinstance(profile.resource_context, dict):
