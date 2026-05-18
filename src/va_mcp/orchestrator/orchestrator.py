@@ -56,10 +56,14 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
     """
     EndpointProfile -> ToolInput 변환 어댑터
     """
-    auth_contexts = [
-        AuthContext(**ctx) if isinstance(ctx, dict) else ctx
-        for ctx in (ep.auth_contexts or [])
-    ]
+    ROLE_RANK = {"guest": 0, "student": 1, "user": 1, "instructor": 2, "admin": 3}
+    auth_contexts = sorted(
+        [
+            AuthContext(**ctx) if isinstance(ctx, dict) else ctx
+            for ctx in (ep.auth_contexts or [])
+        ],
+        key=lambda a: ROLE_RANK.get(getattr(a, "role", ""), 0),
+    )
 
 
     # O-4: path param 치환
