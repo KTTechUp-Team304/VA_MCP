@@ -221,6 +221,25 @@ def test_logging_endpoint(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
+# 13. 고도화 개선 3 — _is_state_changing: side_effect 기본값 + DELETE 메서드
+# ------------------------------------------------------------------ #
+
+def test_state_changing_by_delete_method(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="DELETE",
+        path="/api/users/{userId}",
+        auth_required=True,
+        description="사용자 삭제",
+        # side_effect 미제공 → 기본값 "read"
+    )
+    result = extractor.extract(profile)
+
+    # side_effect="read"이지만 DELETE 메서드 → 상태 변경으로 판단
+    assert result.is_state_changing is True
+
+
+# ------------------------------------------------------------------ #
 # 12. 최소 엔드포인트 — 모든 플래그 False
 # ------------------------------------------------------------------ #
 

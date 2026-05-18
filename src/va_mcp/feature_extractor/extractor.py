@@ -57,6 +57,9 @@ _FILE_CONFIG_KEYWORDS: frozenset[str] = frozenset({
     "export", "import", "backup", "restore",
 })
 
+# 메서드 기반 상태 변경 보조 판단 대상 — POST 제외 (로그인·조회 용도로도 쓰임)
+_STATE_CHANGING_METHODS: frozenset[str] = frozenset({"PUT", "PATCH", "DELETE"})
+
 
 class FeatureExtractor:
     """
@@ -146,7 +149,13 @@ class FeatureExtractor:
 
     def _is_state_changing(self, profile: EndpointProfile) -> bool:
         """side_effect가 create/update/delete이면 상태 변경 엔드포인트로 판단."""
-        return profile.side_effect in ("create", "update", "delete")
+        if profile.side_effect in ("create", "update", "delete"):
+            return True
+        # side_effect 기본값("read")일 때 HTTP 메서드로 보조 판단
+        # PUT/PATCH/DELETE는 의미상 상태 변경이 확실하므로 보조 신호로 활용
+        if profile.side_effect == "read" and profile.method.upper() in _STATE_CHANGING_METHODS:
+            return True
+        return False
 
     def _has_state_field(self, profile: EndpointProfile) -> bool:
         """body에 상태 변경 키워드(status, role, state 등)가 키로 존재하는지 확인."""
