@@ -26,6 +26,11 @@ def test_parse_v4_auth_and_required_roles():
                     },
                     "token_json_path": "accessToken",
                 },
+                "logout": {
+                    "path": "/api/auth/logout",
+                    "method": "POST",
+                    "refresh_cookie_name": "refreshToken",
+                },
                 "accounts": [
                     {"username": "a", "password": "p1", "role": "student"},
                     {"username": "b", "password": "p2", "role": "student"},
@@ -42,7 +47,23 @@ def test_parse_v4_auth_and_required_roles():
         "password": "passwordHash",
     }
     assert len(p.auth.accounts) == 2
+    assert p.auth.logout is not None
+    assert p.auth.logout.path == "/api/auth/logout"
+    assert p.auth.logout.refresh_cookie_name == "refreshToken"
     assert p.credential_fields["password"] == "passwordHash"
+
+
+def test_logout_without_login_fails():
+    with pytest.raises(EndpointProfileValidationError) as exc:
+        parse_endpoint_profile(
+            {
+                "base_url": "http://localhost:4000",
+                "method": "GET",
+                "path": "/api/x",
+                "auth": {"logout": {"path": "/api/auth/logout"}},
+            }
+        )
+    assert any(i.field == "auth" for i in exc.value.issues)
 
 
 def test_accounts_without_login_fails():

@@ -20,6 +20,7 @@
 | `has_role_restriction` | FeatureSet 필드 존재, **extract에서 미설정**(항상 false)                    | `required_roles` 메타데이터로 설정                             |
 | SQLi 선정              | `userId` 등 id형 query는 `has_free_text_input` false → sql_injection 미선정 | 본 문서 부록: 플래너 보완 후보 (`has_identifier_input` 등)     |
 | 산출물                 | `00`~`03` + tool 결과                                                       | `04_auth_provider.json` 추가 (선택 dump)                       |
+| 세션 정리              | 없음 (호출자가 직접 logout)                                                 | **`auth.logout`** + 분석 종료 후 `release_auth`                |
 
 ---
 
@@ -73,6 +74,8 @@ sequenceDiagram
             OR->>TL: tool.run(tool_input)
             TL-->>OR: ToolResult
         end
+        OR->>AB: release_auth(profile, sessions) [본 문서 신규]
+        Note over AB: auth.logout 있을 때만<br/>계정별 Bearer + refresh 쿠키로 logout HTTP
         OR-->>EA: list ToolResult
         EA-->>U: status analyzed
     end
@@ -87,6 +90,7 @@ sequenceDiagram
 | 3    | `ScenarioPlanner.plan`      | ❌          | `03_planner_output.json`          |
 | 4    | `AuthProvider.provide_auth` | ✅ login만  | `04_auth_provider.json` (본 문서) |
 | 5    | `Orchestrator.run_tools`    | ✅ (도구별) | `tools/<tool_id>.json`            |
+| 6    | `AuthProvider.release_auth` | ✅ logout만 | `04`에 revoke 결과 병합 (선택)    |
 
 **중요**: `00_input.json`은 사용자가 보낸 **원본**을 그대로 보존한다. `AuthProvider`로 얻은 JWT는 `04_*` 또는 run 로그에만 남기고, `00_input`을 덮어쓰지 않는다 (비밀번호·토큰 유출 방지 정책은 OBSERVABILITY 문서와 통일).
 
@@ -142,6 +146,11 @@ MCP `analyze_endpoint`의 `input` 인자 = 외부 JSON dict. 본 문서 권장 �
       "password": "passwordHash"
     },
     "token_json_path": "accessToken"
+  },
+  "logout": {
+    "path": "/api/auth/logout",
+    "method": "POST",
+    "refresh_cookie_name": "refreshToken"
   },
   "accounts": [
     {
@@ -211,6 +220,21 @@ AuthProvider은 login HTTP **성공 후** 이 경로로 문자열을 읽어 `Aut
 **이 필드가 없으면** 엔진이 `accessToken` / `token` / `jwt` 등을 순서대로 guess해야 하고, guess 실패 시 모든 계정의 토큰 발급이 실패한다. 명시 경로는 **실패를 빠르게 드러내고** run 로그(`04_auth_provider.json`)에서 원인을 추적하기 쉽다.
 
 점 표기(`data.access_token`)는 중첩 객체용이며, 구현 시 단일 키(`accessToken`)부터 지원해도 된다.
+
+| `auth.logout` 필드        | 설명                                                                 |
+| ------------------------- | -------------------------------------------------------------------- |
+| `path`                    | 로그아웃 API 경로 (예: `/api/auth/logout`)                           |
+| `method`                  | 보통 `POST`                                                          |
+| `refresh_cookie_name`     | login 응답 `Set-Cookie`로 받은 refresh 쿠키 이름. 없으면 Bearer만 전송 |
+
+`auth.accounts`로 login을 수행한 경우 **`auth.logout`을 함께 넘기는 것을 권장**한다.  
+없으면 `AuthProvider`는 분석 후 세션 정리 HTTP를 호출하지 않으며, refresh 토큰이 서버에 남을 수 있다.
+
+`broken_regist` logout 계약:
+
+- `Authorization: Bearer <accessToken>` (login에서 발급한 JWT)
+- 선택: `Cookie: refreshToken=<값>` — login 시 `Set-Cookie`로 내려온 값을 `release_auth`가 재전송
+- 서버: refresh 토큰 폐기 + 쿠키 삭제 (`JwtAuthGuard` 적용)
 
 | `auth.accounts[]` 필드 | 설명                                                                            |
 | ---------------------- | ------------------------------------------------------------------------------- |
@@ -477,10 +501,19 @@ auth_count = max(
 
 ```python
 @dataclass
+class AuthSession:
+    """login 1회당 — release_auth에서 logout에 사용."""
+    role: str
+    access_token: str
+    refresh_cookie: str | None = None  # login Set-Cookie에서 추출
+
+@dataclass
 class AuthProviderResult:
     auth_contexts: list[AuthContext]  # bearer JWT
+    sessions: list[AuthSession]         # provide_auth가 채움 (logout용)
     errors: list[dict]                # 계정별 login 실패
     skipped: bool                     # 이미 auth_contexts 있으면 True
+    revoke_errors: list[dict] = field(default_factory=list)  # release_auth 후 기록
 ```
 
 ### 7.2 실행 조건 (언제 login HTTP를 호출하는가)
@@ -502,16 +535,22 @@ class AuthProviderResult:
 run_tools(planner_output, profile):
   1. if planner_output.need_more_context: return []
 
-  2. auth_ctxs = provide_auth(profile)      # [본 문서 신규]
+  2. auth_result = provide_auth(profile)      # [본 문서 신규]
      - dump 04_auth_provider.json (마스킹)
      - profile_work = profile with auth_contexts filled
 
   3. tool_input = build_tool_input(profile_work)
 
-  4. for tid in planner_output.tool_ids:
-         tool.run(tool_input)
-     return results
+  4. try:
+       for tid in planner_output.tool_ids:
+           tool.run(tool_input)
+     finally:
+       release_auth(profile, auth_result.sessions)  # auth.logout 있을 때만
+
+  5. return results
 ```
+
+`release_auth`는 도구 실행이 성공·실패·중단되어도 **finally**에서 호출한다 (발급한 세션만 정리).
 
 **EndpointProfile 파서는 2번을 호출하지 않는다.**
 
@@ -522,8 +561,23 @@ for account in profile.auth.accounts:
   body = map_credentials(account, profile.auth.login.credential_fields)
   POST {base_url}{login.path}
   token = extract_json(resp, token_json_path)
+  cookie = extract_set_cookie(resp, profile.auth.logout.refresh_cookie_name)  # logout 설정 시
   append AuthContext(role=account.role, auth_type="bearer", token=token)
-return auth_contexts
+  append AuthSession(role=account.role, access_token=token, refresh_cookie=cookie)
+return auth_contexts, sessions
+```
+
+### 7.4.1 `release_auth` 알고리즘 (상세)
+
+`profile.auth.logout`이 없으면 **no-op**.
+
+```
+for session in sessions:
+  headers = { Authorization: Bearer session.access_token }
+  if logout.refresh_cookie_name and session.refresh_cookie:
+    headers.Cookie = "{name}={session.refresh_cookie}"
+  POST {base_url}{logout.path}
+  실패 시 revoke_errors에 기록 (분석 결과는 유지)
 ```
 
 실패 처리 (권장):

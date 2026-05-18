@@ -3,7 +3,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping
 
-from va_mcp.endpoint_profile.auth_config import AccountCredential, AuthConfig, LoginConfig
+from va_mcp.endpoint_profile.auth_config import (
+    AccountCredential,
+    AuthConfig,
+    LoginConfig,
+    LogoutConfig,
+)
 from va_mcp.endpoint_profile.endpoint_profile_normalizer import normalize_method, normalize_path
 from va_mcp.endpoint_profile.logging_utils import log_stage_io
 
@@ -60,6 +65,30 @@ def _normalize_login(raw: Any) -> LoginConfig | None:
     )
 
 
+def _normalize_logout(raw: Any) -> LogoutConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ValueError("auth.logout은 객체(dict)여야 합니다")
+
+    path_raw = raw.get("path", raw.get("logoutPath"))
+    if path_raw is None or not str(path_raw).strip():
+        raise ValueError("auth.logout.path는 비어 있지 않아야 합니다")
+    path = normalize_path(str(path_raw).strip())
+
+    method_raw = raw.get("method", "POST")
+    method = normalize_method(str(method_raw).strip()) if str(method_raw).strip() else "POST"
+
+    cookie_raw = raw.get("refresh_cookie_name", raw.get("refreshCookieName"))
+    refresh_cookie_name: str | None
+    if cookie_raw is None or not str(cookie_raw).strip():
+        refresh_cookie_name = None
+    else:
+        refresh_cookie_name = str(cookie_raw).strip()
+
+    return LogoutConfig(path=path, method=method, refresh_cookie_name=refresh_cookie_name)
+
+
 def _normalize_accounts(raw: Any) -> list[AccountCredential]:
     if raw is None:
         return []
@@ -112,12 +141,15 @@ def normalize_auth_config(raw: Any) -> AuthConfig | None:
         raise ValueError("auth는 객체(dict)여야 합니다")
 
     login = _normalize_login(raw.get("login"))
+    logout = _normalize_logout(raw.get("logout"))
     accounts = _normalize_accounts(raw.get("accounts"))
 
     if accounts and login is None:
         raise ValueError("auth.accounts가 있으면 auth.login이 필요합니다")
+    if logout is not None and login is None:
+        raise ValueError("auth.logout이 있으면 auth.login이 필요합니다")
 
-    normalized = AuthConfig(login=login, accounts=accounts)
+    normalized = AuthConfig(login=login, logout=logout, accounts=accounts)
     log_stage_io(
         logger,
         "normalize_auth_config.exit",
