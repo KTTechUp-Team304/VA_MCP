@@ -90,10 +90,12 @@ class XssReflectedTool(BaseTool):
         body         = req.body or {}
         orig_headers = req.headers or {}
 
+        path_params = list((req.params or {}).keys())
         if method == "GET":
             test_params = list(query.keys())
         else:
             test_params = list(body.keys())
+        test_params = test_params or path_params
 
         if not test_params:
             ended_at   = utc_now_iso()

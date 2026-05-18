@@ -132,7 +132,9 @@ class SqlInjectionTool(BaseTool):
         method = req.method.upper()
         query  = req.query or {}
         body   = req.body or {}
+        path_params = list((req.params or {}).keys())
         test_params = list(query.keys()) if method == "GET" else list(body.keys())
+        test_params = test_params or path_params
         if not test_params:
             ended_at   = utc_now_iso()
             duration_ms = int((time.time() - start_ts) * 1000)
