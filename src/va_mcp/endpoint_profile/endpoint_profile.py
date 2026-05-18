@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
+from va_mcp.endpoint_profile.auth_config import AuthConfig
+
 
 class SideEffect(str, Enum):
     """허용되는 side_effect 값."""
@@ -29,6 +31,8 @@ class EndpointProfile:
     body: dict[str, Any] | None = None
     auth_required: bool = False
     auth_contexts: list[Any] = field(default_factory=list)
+    auth: AuthConfig | None = None
+    required_roles: list[str] = field(default_factory=list)
     description: str = ""
     normal_request_example: dict[str, Any] | None = None
     normal_response_example: dict[str, Any] | None = None

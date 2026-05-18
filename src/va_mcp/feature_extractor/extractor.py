@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from va_mcp.endpoint_profile import EndpointProfile
+from va_mcp.endpoint_profile.endpoint_profile_auth_normalizer import effective_auth_account_count
 from va_mcp.feature_extractor.feature_set import FeatureSet
 
 # ------------------------------------------------------------------ #
@@ -76,8 +77,11 @@ class FeatureExtractor:
             has_free_text_input=self._has_free_text_input(profile),
             has_enum_input=self._has_enum_input(profile),
             # ===== 권한 =====
-            requires_auth=profile.auth_required,                        # EndpointProfile 값 직접 반영
+            requires_auth=profile.auth_required,
             has_resource_identifier=self._has_resource_identifier(profile),
+            has_role_restriction=self._has_role_restriction(profile),
+            has_auth_accounts=self._has_auth_accounts(profile),
+            auth_account_count=effective_auth_account_count(profile),
             # ===== 상태 =====
             is_state_changing=self._is_state_changing(profile),
             has_state_field=self._has_state_field(profile),
@@ -143,6 +147,14 @@ class FeatureExtractor:
 
         return False
 
+    def _has_role_restriction(self, profile: EndpointProfile) -> bool:
+        """EndpointProfile.required_roles가 비어 있지 않으면 역할 제한 메타데이터로 본다."""
+        return bool(profile.required_roles)
+
+    def _has_auth_accounts(self, profile: EndpointProfile) -> bool:
+        """V4 auth.accounts가 1개 이상이면 True."""
+        return bool(profile.auth and profile.auth.accounts)
+
     # ------------------------------------------------------------------ #
     # 상태 관련
     # ------------------------------------------------------------------ #
@@ -179,8 +191,12 @@ class FeatureExtractor:
         )
 
     def _has_credential_fields(self, profile: EndpointProfile) -> bool:
-        """body에 자격증명 키워드(username, password 등)가 키로 존재하는지 확인."""
-        return self._any_key_matches(profile.body, _CREDENTIAL_KEYS)
+        """body 또는 auth.login.credential_fields에 자격증명 매핑이 있으면 True."""
+        if self._any_key_matches(profile.body, _CREDENTIAL_KEYS):
+            return True
+        if profile.auth and profile.auth.login and profile.auth.login.credential_fields:
+            return True
+        return bool(profile.credential_fields)
 
     # ------------------------------------------------------------------ #
     # 시스템 관련 (보조 신호 — path 기반)
