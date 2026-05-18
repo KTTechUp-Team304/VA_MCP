@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from va_mcp.core.planner_output import PlannerOutput
+from va_mcp.endpoint_profile.endpoint_profile_auth_normalizer import effective_auth_account_count
 from va_mcp.planner.baseline import A02_BASELINE_TOOL_IDS, A10_BASELINE_TOOL_IDS
 
 
@@ -102,11 +103,16 @@ class ScenarioPlanner:
         has_enum        = _get(feature_set, "has_enum_input")
         has_user_input  = _get(feature_set, "has_user_input")
 
-        fs_auth    = _get(feature_set, "auth_contexts", 0)
-        auth_count = len(fs_auth) if isinstance(fs_auth, (list, tuple)) else int(fs_auth or 0)
-        if endpoint:
-            ep_auth    = _get(endpoint, "auth_contexts", [])
-            auth_count = max(auth_count, len(ep_auth or []))
+        fs_auth_count = _get(feature_set, "auth_account_count", 0)
+        auth_count = int(fs_auth_count or 0)
+        if endpoint is not None:
+            auth_count = max(auth_count, effective_auth_account_count(endpoint))
+        else:
+            fs_auth = _get(feature_set, "auth_contexts", 0)
+            if isinstance(fs_auth, (list, tuple)):
+                auth_count = max(auth_count, len(fs_auth))
+            elif fs_auth:
+                auth_count = max(auth_count, int(fs_auth))
 
         resource_ctx = _get(feature_set, "resource_context") or (
             _get(endpoint, "resource_context") if endpoint else False

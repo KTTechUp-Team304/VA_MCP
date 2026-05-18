@@ -10,3 +10,5 @@ def test_endpoint_profile_defaults_are_isolated():
     assert q.headers == {}
     p.credential_fields["username"] = "email"
     assert q.credential_fields == {}
+    p.required_roles.append("admin")
+    assert q.required_roles == []

@@ -21,6 +21,7 @@ from va_mcp.core.schemas import (
     AuthContext,
 )
 from va_mcp.core.utils import build_tool_error, utc_now_iso
+from va_mcp.core.auth_provider import AuthProvider
 from va_mcp.endpoint_profile import EndpointProfile
 
 
@@ -125,6 +126,22 @@ class Orchestrator:
         if planner_output.need_more_context:
             return []
 
+        # auth_provider로 토큰 발급 및 auth_contexts 주입
+        provider: AuthProvider | None = None
+        if profile.auth and profile.auth.login and profile.auth.accounts:
+            provider = AuthProvider(profile.base_url, profile.auth)
+            resolved = provider.provide_auth()
+            if resolved:
+                existing_roles = {
+                    getattr(ctx, "role", None)
+                    for ctx in (profile.auth_contexts or [])
+                }
+                merged = list(profile.auth_contexts or [])
+                for ctx in resolved:
+                    if ctx.role not in existing_roles:
+                        merged.append(ctx)
+                profile.auth_contexts = merged
+
         tool_input = build_tool_input(profile)
 
         start_ts = time.time()
@@ -132,41 +149,47 @@ class Orchestrator:
 
         results: list[ToolResult] = []
 
-        for tid in planner_output.tool_ids:
-            tool = self.tools.get(tid)
+        try:
+            for tid in planner_output.tool_ids:
+                tool = self.tools.get(tid)
 
-            if not tool:
-                continue
+                if not tool:
+                    continue
 
-            try:
-                result: ToolResult = tool.run(tool_input)
+                try:
+                    result: ToolResult = tool.run(tool_input)
 
-            except Exception as exc:
-                ended_at = utc_now_iso()
-                duration_ms = int((time.time() - start_ts) * 1000)
+                except Exception as exc:
+                    ended_at = utc_now_iso()
+                    duration_ms = int((time.time() - start_ts) * 1000)
 
-                result = ToolResult(
-                    tool_id=tid,
-                    tool_name=getattr(tool, "tool_name", tid),
-                    status=ToolStatus.ERROR.value,
-                    severity=Severity.INFO.value,
-                    confidence=Confidence.LOW.value,
-                    title="툴 실행 오류",
-                    description=str(exc),
-                    evidence=[],
-                    errors=[
-                        build_tool_error(
-                            ErrorCode.INTERNAL_ERROR.value,
-                            str(exc),
-                            retryable=False,
-                        )
-                    ],
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    duration_ms=duration_ms,
-                    tool_version=getattr(tool, "tool_version", "0.1.0"),
-                )
+                    result = ToolResult(
+                        tool_id=tid,
+                        tool_name=getattr(tool, "tool_name", tid),
+                        status=ToolStatus.ERROR.value,
+                        severity=Severity.INFO.value,
+                        confidence=Confidence.LOW.value,
+                        title="툴 실행 오류",
+                        description=str(exc),
+                        evidence=[],
+                        errors=[
+                            build_tool_error(
+                                ErrorCode.INTERNAL_ERROR.value,
+                                str(exc),
+                                retryable=False,
+                            )
+                        ],
+                        started_at=started_at,
+                        ended_at=ended_at,
+                        duration_ms=duration_ms,
+                        tool_version=getattr(tool, "tool_version", "0.1.0"),
+                    )
 
-            results.append(result)
+                results.append(result)
+
+        finally:
+            # 스캔 완료 후 토큰 폐기
+            if provider:
+                provider.logout_all()
 
         return results
