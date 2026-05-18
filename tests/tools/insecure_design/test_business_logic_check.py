@@ -36,6 +36,12 @@ def make_tool_input():
 
 @patch("va_mcp.tools.insecure_design.business_logic_check.requests.request")
 def test_business_logic_passed(mock_request):
+    # 원본 요청 응답
+    mock_orig = MagicMock()
+    mock_orig.status_code = 200
+    mock_orig.text = "original"
+    mock_orig.headers = {}
+
     mock1 = MagicMock()
     mock1.status_code = 400
     mock1.text = "Invalid"
@@ -46,7 +52,7 @@ def test_business_logic_passed(mock_request):
     mock2.text = "Invalid"
     mock2.headers = {}
 
-    mock_request.side_effect = [mock1, mock2]
+    mock_request.side_effect = [mock_orig, mock1, mock2]
 
     result = BusinessLogicCheckTool().run(make_tool_input())
 
@@ -62,17 +68,23 @@ def test_business_logic_passed(mock_request):
 
 @patch("va_mcp.tools.insecure_design.business_logic_check.requests.request")
 def test_business_logic_vulnerable(mock_request):
+    # 원본 요청 응답
+    mock_orig = MagicMock()
+    mock_orig.status_code = 200
+    mock_orig.text = "original"
+    mock_orig.headers = {}
+
     mock1 = MagicMock()
     mock1.status_code = 200
-    mock1.text = "success"
+    mock1.text = "changed"  # 응답 변화 있음 → VULNERABLE
     mock1.headers = {}
 
     mock2 = MagicMock()
     mock2.status_code = 200
-    mock2.text = "success"
+    mock2.text = "changed"
     mock2.headers = {}
 
-    mock_request.side_effect = [mock1, mock2]
+    mock_request.side_effect = [mock_orig, mock1, mock2]
 
     result = BusinessLogicCheckTool().run(make_tool_input())
 

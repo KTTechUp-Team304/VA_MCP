@@ -206,7 +206,18 @@ class BusinessLogicCheckTool(BaseTool):
         rejected: List[Evidence] = []
 
         try:
-            # 10) 비정상 값 순차 전송
+            # 10) 원본 요청 전송 (비교 기준)
+            orig_resp = requests.request(
+                req.method.upper(),
+                url,
+                headers=headers,
+                json=orig_body,
+                timeout=timeout_s,
+                allow_redirects=False,
+            )
+            orig_text = orig_resp.text.strip()
+
+            # 11) 비정상 값 순차 전송
             for invalid in invalid_values:
                 if req.method.upper() in ("POST", "PUT", "PATCH"):
                     test_body = {**orig_body, test_field: invalid}
@@ -228,6 +239,9 @@ class BusinessLogicCheckTool(BaseTool):
                     # GET 등은 비정상 body 검사 대상 아님
                     break
 
+                # 주입 후 응답이 원본과 달라졌을 때만 수락으로 판정
+                response_changed = resp.text.strip() != orig_text
+
                 evidence = Evidence(
                     request=req_info,
                     response_status=resp.status_code,
@@ -235,11 +249,12 @@ class BusinessLogicCheckTool(BaseTool):
                     response_body_sample=sanitize_response_sample(resp.text),
                     note=(
                         f"필드 '{test_field}'에 비정상 값 {invalid!r} 전송 → "
-                        f"응답 코드: {resp.status_code}"
+                        f"응답 코드: {resp.status_code}, "
+                        f"응답 변화: {'있음' if response_changed else '없음'}"
                     ),
                 )
 
-                if 200 <= resp.status_code < 300:
+                if 200 <= resp.status_code < 300 and response_changed:
                     accepted.append(evidence)
                 else:
                     rejected.append(evidence)
