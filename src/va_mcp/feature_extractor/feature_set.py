@@ -31,7 +31,13 @@ class FeatureSet:
 
     has_role_restriction: bool = False
     # 특정 역할(admin 등)만 접근 가능한 엔드포인트 여부
-    # EndpointProfile의 required_role, permission 등 메타데이터 기반
+    # EndpointProfile.required_roles 메타데이터 기반
+
+    has_auth_accounts: bool = False
+    # V4 auth.accounts 존재 (AuthProvider 실행 전 테스트 계정)
+
+    auth_account_count: int = 0
+    # bearer auth_contexts 또는 auth.accounts 중 큰 개수 (Planner A01용)
 
     # ===== 상태 =====
     is_state_changing: bool = False

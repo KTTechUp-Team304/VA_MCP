@@ -172,6 +172,8 @@ def test_serialization_keys_fixed():
         "body",
         "auth_required",
         "auth_contexts",
+        "auth",
+        "required_roles",
         "description",
         "normal_request_example",
         "normal_response_example",

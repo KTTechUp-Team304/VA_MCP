@@ -5,6 +5,7 @@ import logging
 from typing import Any, Mapping
 
 from va_mcp.endpoint_profile.endpoint_profile import EndpointProfile, SideEffect
+from va_mcp.endpoint_profile.endpoint_profile_auth_normalizer import normalize_auth_config
 from va_mcp.endpoint_profile.endpoint_profile_normalizer import (
     normalize_base_url,
     normalize_method,
@@ -40,6 +41,8 @@ _CANONICAL_KEYS = frozenset(
         "side_effect",
         "returns_sensitive_data",
         "credential_fields",
+        "auth",
+        "required_roles",
     }
 )
 
@@ -70,6 +73,7 @@ _ALIASES: dict[str, str] = {
     "sideEffect": "side_effect",
     "returnsSensitiveData": "returns_sensitive_data",
     "credentialFields": "credential_fields",
+    "requiredRoles": "required_roles",
 }
 
 
@@ -125,6 +129,35 @@ def _parse_bool(v: Any, default: bool = False) -> bool:
         if s in ("false", "0", "no", "n", ""):
             return False
     return bool(v)
+
+
+def _parse_required_roles(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise EndpointProfileValidationError(
+            [
+                ValidationIssue(
+                    "TYPE",
+                    "required_roles",
+                    "required_roles는 문자열 리스트이거나 생략되어야 합니다",
+                )
+            ]
+        )
+    roles: list[str] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str) or not item.strip():
+            raise EndpointProfileValidationError(
+                [
+                    ValidationIssue(
+                        "TYPE",
+                        "required_roles",
+                        f"required_roles[{i}]는 비어 있지 않은 문자열이어야 합니다",
+                    )
+                ]
+            )
+        roles.append(item.strip())
+    return roles
 
 
 def parse_endpoint_profile(
@@ -324,6 +357,35 @@ def parse_endpoint_profile(
                 )
             credential_fields[ck] = "" if cv is None else str(cv)
 
+    required_roles = _parse_required_roles(c.get("required_roles"))
+
+    auth_raw = c.get("auth")
+    auth_config = None
+    if auth_raw is not None:
+        try:
+            auth_config = normalize_auth_config(auth_raw)
+        except ValueError as e:
+            raise EndpointProfileValidationError(
+                [ValidationIssue("AUTH", "auth", str(e))]
+            ) from e
+        if auth_config and auth_config.login and auth_config.login.credential_fields:
+            if not credential_fields:
+                credential_fields = dict(auth_config.login.credential_fields)
+            else:
+                merged = dict(auth_config.login.credential_fields)
+                merged.update(credential_fields)
+                credential_fields = merged
+
+    log_stage_io(
+        logger,
+        "parse.04b_auth",
+        input_data={"auth_raw": auth_raw, "required_roles": required_roles},
+        output_data={
+            "auth": auth_config.to_serializable_dict() if auth_config else None,
+            "credential_fields": credential_fields,
+        },
+    )
+
     profile = EndpointProfile(
         base_url=base_url,
         method=method,
@@ -334,6 +396,8 @@ def parse_endpoint_profile(
         body=body,
         auth_required=auth_required,
         auth_contexts=auth_contexts,
+        auth=auth_config,
+        required_roles=required_roles,
         description=description,
         normal_request_example=nreq_dict,
         normal_response_example=nres_dict,
