@@ -104,10 +104,12 @@ class PathTraversalTool(BaseTool):
         query  = req.query or {}
         body   = req.body or {}
 
+        path_params = list((req.params or {}).keys())
         if method == "GET":
             test_params = list(query.keys())
         else:
             test_params = list(body.keys())
+        test_params = test_params or path_params
 
         if not test_params:
             ended_at   = utc_now_iso()

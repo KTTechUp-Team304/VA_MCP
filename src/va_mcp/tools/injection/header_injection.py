@@ -216,8 +216,7 @@ class HeaderInjectionTool(BaseTool):
                         if sig in body_lower
                     ]
 
-                    detected = hdr_detect + body_detect
-                    if detected:
+                    if hdr_detect:
                         evidences.append(
                             Evidence(
                                 request=request_info,
@@ -226,7 +225,20 @@ class HeaderInjectionTool(BaseTool):
                                 response_body_sample=sanitize_response_sample(resp.text),
                                 note=(
                                     f"파라미터 '{param}'에 페이로드 '{payload}' 삽입 시 "
-                                    f"인젝션 시그니처 감지: {detected[:3]}"
+                                    f"응답 헤더에 인젝션 확인: {hdr_detect[:3]}"
+                                ),
+                            )
+                        )
+                    elif body_detect:
+                        evidences.append(
+                            Evidence(
+                                request=request_info,
+                                response_status=resp.status_code,
+                                response_headers=dict(resp.headers),
+                                response_body_sample=sanitize_response_sample(resp.text),
+                                note=(
+                                    f"파라미터 '{param}'에 페이로드 '{payload}' 삽입 시 "
+                                    f"응답 본문 반사 감지 (단순 반사 가능성): {body_detect[:3]}"
                                 ),
                             )
                         )
@@ -238,7 +250,11 @@ class HeaderInjectionTool(BaseTool):
             ended_at   = utc_now_iso()
             duration_ms = int((time.time() - start_ts) * 1000)
 
-            if evidences:
+            # 응답 헤더에서 인젝션 확인된 evidence가 하나라도 있으면 HIGH
+            hdr_evidences  = [e for e in evidences if "응답 헤더에 인젝션 확인" in (e.note or "")]
+            body_evidences = [e for e in evidences if "응답 본문 반사 감지" in (e.note or "")]
+
+            if hdr_evidences:
                 return ToolResult(
                     tool_id=self.tool_id,
                     tool_name=self.tool_name,
@@ -247,12 +263,40 @@ class HeaderInjectionTool(BaseTool):
                     confidence=Confidence.HIGH.value,
                     title="HTTP Header Injection (CRLF) 취약점 발견",
                     description=(
-                        f"총 {len(evidences)}건의 헤더 인젝션 징후가 감지되었습니다. "
+                        f"총 {len(hdr_evidences)}건의 헤더 인젝션이 응답 헤더에서 확인되었습니다. "
                         f"테스트 파라미터: {test_params}"
                     ),
                     owasp=["A05:2025 Injection"],
                     cwe=["CWE-113"],
-                    evidence=evidences,
+                    evidence=hdr_evidences,
+                    recommendation=(
+                        "1. 사용자 입력을 헤더에 직접 포함하지 마세요.\n"
+                        "2. CRLF 문자를 필터링하세요.\n"
+                        "3. 프레임워크 API를 통해 헤더 처리하세요.\n"
+                        "4. URL 인코딩된 CRLF(%0d%0a)도 필터링하세요."
+                    ),
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    tool_version=self.tool_version,
+                )
+
+            if body_evidences:
+                return ToolResult(
+                    tool_id=self.tool_id,
+                    tool_name=self.tool_name,
+                    status=ToolStatus.VULNERABLE.value,
+                    severity=Severity.LOW.value,
+                    confidence=Confidence.MEDIUM.value,
+                    title="HTTP Header Injection 응답 본문 반사 감지 (낮은 신뢰도)",
+                    description=(
+                        f"총 {len(body_evidences)}건의 페이로드가 응답 본문에서 반사되었습니다. "
+                        f"단순 반사일 수 있으므로 수동 확인이 필요합니다. "
+                        f"테스트 파라미터: {test_params}"
+                    ),
+                    owasp=["A05:2025 Injection"],
+                    cwe=["CWE-113"],
+                    evidence=body_evidences,
                     recommendation=(
                         "1. 사용자 입력을 헤더에 직접 포함하지 마세요.\n"
                         "2. CRLF 문자를 필터링하세요.\n"
