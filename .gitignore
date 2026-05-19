@@ -1,7 +1,54 @@
+# Virtual environments
 .venv/
+venv/
+ENV/
+
+# Python bytecode
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+
+# Packaging / distribution (setuptools, uv tool install, pip)
+build/
+dist/
 *.egg-info/
-.env
-outputs/
+.eggs/
+*.egg
+*.whl
+pip-wheel-metadata/
+share/python-wheels/
+
+# Testing / coverage
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Run artifacts & logs
+outputs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
