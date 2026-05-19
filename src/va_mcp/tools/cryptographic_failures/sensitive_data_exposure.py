@@ -58,6 +58,8 @@ DEFAULT_PATTERNS: List[Tuple[str, str]] = [
     ("사용자 ID 노출", r'(?i)["\']?user_?id["\']?\s*:\s*["\']?[A-Za-z0-9\-]+["\']?'),
     ("AWS Access Key", r"AKIA[0-9A-Z]{16}"),
     ("Private Key 헤더", r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    ("서버 내부 파일 경로", r'(?i)["\']?stored_?path["\']?\s*:\s*["\'][^"\']+["\']'),
+    ("Unix 절대 경로 노출", r'["\'][/\\](?:uploads|var|tmp|home|srv|opt|etc)[/\\][^"\']{3,}["\']'),
 ]
 
 # 탐지용 응답 텍스트 최대 크기 (500KB) — 대용량 응답 성능 보호
