@@ -179,7 +179,13 @@ class FeatureExtractor:
         )
 
     def _has_credential_fields(self, profile: EndpointProfile) -> bool:
-        """body에 자격증명 키워드(username, password 등)가 키로 존재하는지 확인."""
+        """엔드포인트 자체의 body에 자격증명 키워드가 있는지만 확인한다.
+
+        auth.login.credential_fields는 V4 auth 블록의 로그인 메타데이터로,
+        테스트 대상 엔드포인트 자체의 입력 구조와 무관하다.
+        profile.credential_fields 역시 파서가 auth 블록에서 전파한 값이므로 제외한다.
+        """
+        # 엔드포인트 body 키만 확인 — auth 블록 전파값은 모든 엔드포인트에 퍼지므로 오탐 원인
         return self._any_key_matches(profile.body, _CREDENTIAL_KEYS)
 
     # ------------------------------------------------------------------ #
