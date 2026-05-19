@@ -126,17 +126,19 @@ class JwtValidationTool(BaseTool):
                 method=tool_input.request.method,
                 url=url,
                 headers=orig_headers,
+                json=tool_input.request.body if tool_input.request.body else None,  # 추가
                 timeout=timeout_s,
             )
             res_tampered = requests.request(
                 method=tool_input.request.method,
                 url=url,
                 headers=auth_headers_tampered,
+                json=tool_input.request.body if tool_input.request.body else None,  # 추가
                 timeout=timeout_s,
             )
 
             # 7) 첫 요청이 실패하면 SKIPPED
-            if res_valid.status_code != 200:
+            if not (200 <= res_valid.status_code < 300):
                 ended_at = utc_now_iso()
                 return ToolResult(
                     tool_id=self.tool_id,
@@ -156,7 +158,7 @@ class JwtValidationTool(BaseTool):
                 )
 
             # 8) 취약 여부 판단
-            vulnerable = res_tampered.status_code == 200
+            vulnerable = 200 <= res_tampered.status_code < 300
 
             # 9) 결과 설정
             owasp = ["A02:2025 Cryptographic Failures"]

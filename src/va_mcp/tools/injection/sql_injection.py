@@ -132,7 +132,9 @@ class SqlInjectionTool(BaseTool):
         method = req.method.upper()
         query  = req.query or {}
         body   = req.body or {}
+        path_params = list((req.params or {}).keys())
         test_params = list(query.keys()) if method == "GET" else list(body.keys())
+        test_params = test_params or path_params
         if not test_params:
             ended_at   = utc_now_iso()
             duration_ms = int((time.time() - start_ts) * 1000)
@@ -186,7 +188,27 @@ class SqlInjectionTool(BaseTool):
         evidences: List[Evidence] = []
         request_count = 0
 
+        # JSON 응답에서 성공 여부를 판단할 토큰/키 목록
+        _SUCCESS_KEYS = {"accessToken", "access_token", "token", "refreshToken", "refresh_token", "id_token"}
+
         try:
+            # 7-0) baseline 요청 — 원본 body/query로 정상 응답 기록
+            try:
+                baseline_resp = requests.request(
+                    method,
+                    full_url,
+                    headers=headers,
+                    params=query if method == "GET" else None,
+                    json=body if method != "GET" else None,
+                    timeout=timeout_s,
+                    allow_redirects=False,
+                )
+                baseline_status = baseline_resp.status_code
+                baseline_text   = baseline_resp.text.strip()
+            except Exception:
+                baseline_status = -1
+                baseline_text   = ""
+
             # 7) 페이로드 테스트 루프
             for param in test_params:
                 for payload in payload_list:
@@ -229,14 +251,42 @@ class SqlInjectionTool(BaseTool):
 
                     request_count += 1
 
-                    # ── 응답 분석: SQL 에러 시그니처 감지
+                    # ── 응답 분석 ─────────────────────────────────────────
                     txt = resp.text.lower()
+
+                    # A) SQL 에러 시그니처 감지 (구형 백엔드 대응)
                     detected = [
                         sig for sig in SQL_ERROR_SIGNATURES
                         if sig in txt
                     ]
 
-                    if detected:
+                    # B) baseline 대비 status 변화 (4xx → 2xx: bypass 성공)
+                    status_changed = (
+                        baseline_status >= 400
+                        and 200 <= resp.status_code < 300
+                    )
+
+                    # C) JSON 성공 지표 감지 + baseline 응답과 다름
+                    json_success = False
+                    if 200 <= resp.status_code < 300:
+                        try:
+                            resp_json = resp.json()
+                            if isinstance(resp_json, dict):
+                                json_success = bool(
+                                    _SUCCESS_KEYS & set(resp_json.keys())
+                                ) and resp.text.strip() != baseline_text
+                        except Exception:
+                            pass
+
+                    if detected or status_changed or json_success:
+                        reasons = []
+                        if detected:
+                            reasons.append(f"SQL 에러 시그니처: {detected[:3]}")
+                        if status_changed:
+                            reasons.append(f"상태코드 변화: {baseline_status} → {resp.status_code} (bypass 성공)")
+                        if json_success:
+                            reasons.append("JSON 성공 응답 수신 (토큰/인증 키 포함, baseline과 상이)")
+
                         evidences.append(
                             Evidence(
                                 request=req_info,
@@ -245,7 +295,7 @@ class SqlInjectionTool(BaseTool):
                                 response_body_sample=sanitize_response_sample(resp.text),
                                 note=(
                                     f"파라미터 '{param}'에 페이로드 '{payload}' 삽입 시 "
-                                    f"SQL 에러 시그니처 감지: {detected[:3]}"
+                                    f"SQL Injection 징후 감지: {' / '.join(reasons)}"
                                 ),
                             )
                         )

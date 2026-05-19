@@ -206,7 +206,18 @@ class BusinessLogicCheckTool(BaseTool):
         rejected: List[Evidence] = []
 
         try:
-            # 10) 비정상 값 순차 전송
+            # 10) 원본 요청 전송 (비교 기준)
+            orig_resp = requests.request(
+                req.method.upper(),
+                url,
+                headers=headers,
+                json=orig_body,
+                timeout=timeout_s,
+                allow_redirects=False,
+            )
+            orig_text = orig_resp.text.strip()
+
+            # 11) 비정상 값 순차 전송
             for invalid in invalid_values:
                 if req.method.upper() in ("POST", "PUT", "PATCH"):
                     test_body = {**orig_body, test_field: invalid}
@@ -228,6 +239,9 @@ class BusinessLogicCheckTool(BaseTool):
                     # GET 등은 비정상 body 검사 대상 아님
                     break
 
+                # 주입 후 응답이 원본과 달라졌을 때만 수락으로 판정
+                response_changed = resp.text.strip() != orig_text
+
                 evidence = Evidence(
                     request=req_info,
                     response_status=resp.status_code,
@@ -235,14 +249,15 @@ class BusinessLogicCheckTool(BaseTool):
                     response_body_sample=sanitize_response_sample(resp.text),
                     note=(
                         f"필드 '{test_field}'에 비정상 값 {invalid!r} 전송 → "
-                        f"응답 코드: {resp.status_code}"
+                        f"응답 코드: {resp.status_code}, "
+                        f"응답 변화: {'있음' if response_changed else '없음'}"
                     ),
                 )
 
-                if resp.status_code in (400, 422):
-                    rejected.append(evidence)
-                else:
+                if 200 <= resp.status_code < 300 and response_changed:
                     accepted.append(evidence)
+                else:
+                    rejected.append(evidence)
 
             ended_at   = utc_now_iso()
             duration_ms = int((time.time() - start_ts) * 1000)
@@ -272,7 +287,23 @@ class BusinessLogicCheckTool(BaseTool):
                     tool_version=self.tool_version,
                 )
 
-            # PASSED: 모두 거부
+            # PASSED: 모두 거부 — 거부 사유에 따라 설명 분기
+            # 경우 A: 4xx/5xx로 거부 / 경우 B: 2xx지만 응답 내용이 원본과 동일(필드 무시)
+            has_2xx_rejected = any(
+                200 <= e.response_status < 300 for e in rejected
+            )
+            if has_2xx_rejected:
+                passed_description = (
+                    f"필드 '{test_field}'에 비정상 값을 전송하였으나 "
+                    f"서버가 해당 필드를 무시하고 원본과 동일한 응답을 반환했습니다 "
+                    f"({len(invalid_values)}건). 비즈니스 로직에 영향 없음."
+                )
+            else:
+                passed_description = (
+                    f"필드 '{test_field}'에 전송된 모든 비정상 값 "
+                    f"({len(invalid_values)}건)이 2xx 외 응답으로 거부되었습니다."
+                )
+
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
@@ -280,10 +311,7 @@ class BusinessLogicCheckTool(BaseTool):
                 severity=Severity.INFO.value,
                 confidence=Confidence.HIGH.value,
                 title="비즈니스 로직 값 검증 적용됨",
-                description=(
-                    f"필드 '{test_field}'에 전송된 모든 비정상 값 "
-                    f"({len(invalid_values)}건)이 400/422로 거부되었습니다."
-                ),
+                description=passed_description,
                 owasp=["A06 Insecure Design"],
                 cwe=["CWE-840"],
                 evidence=rejected,

@@ -22,7 +22,7 @@ from va_mcp.core.utils import (
     sanitize_request_body,
 )
 # 필드 매핑 적용을 위한 resolver 추가
-from va_mcp.core.resolvers.auth_resolver import parse_credentials, CredentialResolverError
+from va_mcp.core.resolvers.auth_resolver import parse_credentials, apply_field_mapping, CredentialResolverError
 
 
 class BruteForceTool(BaseTool):
@@ -122,7 +122,8 @@ class BruteForceTool(BaseTool):
             # 5) 브루트포스 시도
             for auth_ctx in basic_ctxs:
                 try:
-                    creds = parse_credentials(auth_ctx, mapping)
+                    raw_creds = parse_credentials(auth_ctx)
+                    creds = apply_field_mapping(raw_creds, {"credential_fields": mapping})
                 except CredentialResolverError as e:
                     # 이 컨텍스트 건너뜀
                     continue

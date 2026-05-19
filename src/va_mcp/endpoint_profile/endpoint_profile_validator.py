@@ -99,10 +99,89 @@ def validate_endpoint_profile(profile: EndpointProfile) -> None:
     if profile.body is not None and not isinstance(profile.body, dict):
         issues.append(ValidationIssue("TYPE", "body", "body는 dict | None이어야 합니다"))
 
+    if not isinstance(profile.credential_fields, dict):
+        issues.append(
+            ValidationIssue("TYPE", "credential_fields", "credential_fields는 dict이어야 합니다")
+        )
+    else:
+        for fk, fv in profile.credential_fields.items():
+            if not isinstance(fk, str) or not fk.strip():
+                issues.append(
+                    ValidationIssue(
+                        "TYPE",
+                        "credential_fields",
+                        "credential_fields의 키는 비어 있지 않은 문자열이어야 합니다",
+                    )
+                )
+                break
+            if not isinstance(fv, str):
+                issues.append(
+                    ValidationIssue(
+                        "TYPE",
+                        "credential_fields",
+                        "credential_fields의 값은 문자열이어야 합니다",
+                    )
+                )
+                break
+
     if not isinstance(profile.auth_contexts, list):
         issues.append(
             ValidationIssue("TYPE", "auth_contexts", "auth_contexts는 list이어야 합니다")
         )
+
+    if not isinstance(profile.required_roles, list):
+        issues.append(
+            ValidationIssue("TYPE", "required_roles", "required_roles는 list이어야 합니다")
+        )
+    else:
+        for i, role in enumerate(profile.required_roles):
+            if not isinstance(role, str) or not role.strip():
+                issues.append(
+                    ValidationIssue(
+                        "TYPE",
+                        "required_roles",
+                        f"required_roles[{i}]는 비어 있지 않은 문자열이어야 합니다",
+                    )
+                )
+                break
+
+    if profile.auth is not None:
+        if profile.auth.accounts and profile.auth.login is None:
+            issues.append(
+                ValidationIssue(
+                    "AUTH",
+                    "auth",
+                    "auth.accounts가 있으면 auth.login이 필요합니다",
+                )
+            )
+        if profile.auth.login is not None:
+            login = profile.auth.login
+            if not _is_non_empty_str(login.path):
+                issues.append(
+                    ValidationIssue("AUTH", "auth.login.path", "login path는 비어 있지 않아야 합니다")
+                )
+            if not _is_non_empty_str(login.token_json_path):
+                issues.append(
+                    ValidationIssue(
+                        "AUTH",
+                        "auth.login.token_json_path",
+                        "token_json_path는 비어 있지 않아야 합니다",
+                    )
+                )
+        if profile.auth.logout is not None:
+            logout = profile.auth.logout
+            if not _is_non_empty_str(logout.path):
+                issues.append(
+                    ValidationIssue("AUTH", "auth.logout.path", "logout path는 비어 있지 않아야 합니다")
+                )
+            if profile.auth.login is None:
+                issues.append(
+                    ValidationIssue(
+                        "AUTH",
+                        "auth.logout",
+                        "auth.logout이 있으면 auth.login이 필요합니다",
+                    )
+                )
 
     if profile.resource_context is not None:
         if not isinstance(profile.resource_context, dict):

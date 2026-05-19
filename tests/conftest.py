@@ -1,28 +1,43 @@
-from __future__ import annotations
-
-import logging
-import sys
-
 import pytest
+from va_mcp.core.schemas import ToolInput, ToolOptions, ApiRequest, TargetInfo
 
 
-def pytest_configure(config: pytest.Config) -> None:
-    """
-    .env의 LOG_LEVEL을 반영해 로깅을 초기화한다.
+class DummyResponse:
+    def __init__(self, status=200, headers=None, text="ok"):
+        self.status_code = status
+        self.headers = headers or {}
+        self.text = text
 
-    va_mcp.config를 import하면 load_dotenv()가 실행되어 LOG_LEVEL을 읽는다.
-    테스트만 실행할 때도 endpoint_profile 등의 DEBUG 로그가 필터되지 않도록 한다.
-    """
-    from va_mcp import config as app_config
 
-    level_name = str(app_config.LOG_LEVEL).upper()
-    level = getattr(logging, level_name, logging.INFO)
+@pytest.fixture
+def mock_requests(monkeypatch):
+    def _mock(status=200, text="ok"):
+        def fake_request(*args, **kwargs):
+            return DummyResponse(status=status, text=text)
 
-    # pytest가 이미 핸들러를 둔 뒤일 수 있어 force로 레벨·핸들러를 맞춘다.
-    logging.basicConfig(
-        level=level,
-        format="%(levelname)s %(name)s: %(message)s",
-        stream=sys.stderr,
-        force=True,
+        monkeypatch.setattr("requests.request", fake_request)
+        monkeypatch.setattr("requests.get", fake_request)
+        return fake_request
+
+    return _mock
+
+
+@pytest.fixture
+def base_input():
+    return ToolInput(
+        target=TargetInfo(base_url="http://test.com"),
+        request=ApiRequest(
+            method="GET",
+            path="/admin",
+            headers={},
+            query={"id": "1"},
+            body={}
+        ),
+        auth=[{"auth_type": "bearer", "token": "abc"}],
+        options=ToolOptions(
+            timeout=5000,
+            max_requests=5,
+            safe_mode=False,
+            extra={}
+        ),
     )
-    logging.getLogger("va_mcp").setLevel(level)

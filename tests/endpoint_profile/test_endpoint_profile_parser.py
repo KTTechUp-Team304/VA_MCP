@@ -108,6 +108,43 @@ def test_invalid_side_effect_fails():
     assert any(i.code == "INVALID_SIDE_EFFECT" for i in ei.value.issues)
 
 
+def test_credential_fields_preserved():
+    p = parse_endpoint_profile(
+        {
+            "base_url": "https://api.example.com",
+            "method": "POST",
+            "path": "/login",
+            "credential_fields": {"username": "email", "password": "passwd"},
+        }
+    )
+    assert p.credential_fields == {"username": "email", "password": "passwd"}
+
+
+def test_credential_fields_camel_case_alias():
+    p = parse_endpoint_profile(
+        {
+            "baseUrl": "https://api.example.com",
+            "method": "POST",
+            "path": "/login",
+            "credentialFields": {"username": "userId", "password": "secret"},
+        }
+    )
+    assert p.credential_fields == {"username": "userId", "password": "secret"}
+
+
+def test_credential_fields_invalid_type_fails():
+    with pytest.raises(EndpointProfileValidationError) as ei:
+        parse_endpoint_profile(
+            {
+                "base_url": "https://a.com",
+                "method": "GET",
+                "path": "/p",
+                "credential_fields": ["username"],
+            }
+        )
+    assert any(i.field == "credential_fields" for i in ei.value.issues)
+
+
 def test_auth_contexts_not_shared_between_profiles():
     a = parse_endpoint_profile(
         {"base_url": "https://a.com", "method": "GET", "path": "/x"}
@@ -135,12 +172,15 @@ def test_serialization_keys_fixed():
         "body",
         "auth_required",
         "auth_contexts",
+        "auth",
+        "required_roles",
         "description",
         "normal_request_example",
         "normal_response_example",
         "resource_context",
         "side_effect",
         "returns_sensitive_data",
+        "credential_fields",
     }
     clone = deepcopy(d)
     parsed = parse_endpoint_profile(clone)

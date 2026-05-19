@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from va_mcp.endpoint_profile.auth_config import AccountCredential, AuthConfig, LoginConfig
 from va_mcp.endpoint_profile.endpoint_profile import EndpointProfile, SideEffect
 from va_mcp.endpoint_profile.endpoint_profile_parser import parse_endpoint_profile
 from va_mcp.endpoint_profile.endpoint_profile_validator import (
@@ -9,8 +10,11 @@ from va_mcp.endpoint_profile.endpoint_profile_validator import (
 )
 
 __all__ = [
+    "AccountCredential",
+    "AuthConfig",
     "EndpointProfile",
     "EndpointProfileValidationError",
+    "LoginConfig",
     "SideEffect",
     "ValidationIssue",
     "parse_endpoint_profile",

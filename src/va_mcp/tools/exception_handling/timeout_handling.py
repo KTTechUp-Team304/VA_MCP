@@ -42,8 +42,8 @@ DEFAULT_PAYLOADS = [
 
 
 class TimeoutHandlingTool(BaseTool):
-    tool_id = "stack_trace_exposure"
-    tool_name = "Stack Trace Exposure Testing"
+    tool_id = "timeout_handling"
+    tool_name = "Timeout Handling Testing"
     tool_version = "0.1.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
@@ -153,6 +153,7 @@ class TimeoutHandlingTool(BaseTool):
                     url=url,
                     headers=headers,
                     params=params,
+                    json=req.body if method in ("POST", "PUT", "PATCH") and req.body else None,
                     timeout=timeout_s,
                     allow_redirects=False,
                 )
@@ -220,7 +221,7 @@ class TimeoutHandlingTool(BaseTool):
             return ToolResult(
                 tool_id=self.tool_id,
                 tool_name=self.tool_name,
-                status=ToolStatus.ERROR.value,
+                status=ToolStatus.VULNERABLE.value,
                 severity=Severity.INFO.value,
                 confidence=Confidence.LOW.value,
                 title="요청 타임아웃",
