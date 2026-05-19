@@ -53,6 +53,21 @@ class AuthProvider:
 
         return auth_contexts
 
+    def provide_basic_auth(self) -> list[AuthContext]:
+        """
+        원본 자격증명을 basic AuthContext로 반환한다.
+        auth_bruteforce / auth_lockout / auth_rate_limit / auth_enum 전용.
+        token 필드에 "username:password" 포맷으로 담아 auth_resolver가 파싱할 수 있게 한다.
+        """
+        return [
+            AuthContext(
+                role=account.role,
+                auth_type="basic",
+                token=f"{account.username}:{account.password}",
+            )
+            for account in (self._auth_config.accounts or [])
+        ]
+
     def logout_all(self) -> None:
         """
         캐싱된 모든 계정의 토큰을 폐기한다.

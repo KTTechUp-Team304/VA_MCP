@@ -73,6 +73,11 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
         for key, value in ep.params.items():
             resolved_path = resolved_path.replace(f"{{{key}}}", str(value))
 
+    # credential_fields: ep.credential_fields 우선, 없으면 auth.login.credential_fields fallback
+    cred_fields = ep.credential_fields
+    if not cred_fields and ep.auth and ep.auth.login and ep.auth.login.credential_fields:
+        cred_fields = ep.auth.login.credential_fields
+
     return ToolInput(
         target=TargetInfo(
             base_url=ep.base_url,
@@ -92,8 +97,8 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
             max_requests=20,
             extra={
                 "field_mapping": {
-                    "credential_fields": ep.credential_fields
-                } if ep.credential_fields else {}
+                    "credential_fields": cred_fields
+                } if cred_fields else {}
             },
         ),
     )
@@ -144,6 +149,16 @@ class Orchestrator:
 
         tool_input = build_tool_input(profile)
 
+        # 브루트포스 계열 툴 전용 basic 컨텍스트 (원본 자격증명 보존)
+        _CREDENTIAL_TOOLS = {"auth_bruteforce", "auth_lockout", "auth_rate_limit", "auth_enum"}
+        basic_contexts = provider.provide_basic_auth() if provider else []
+        cred_tool_input = ToolInput(
+            target=tool_input.target,
+            request=tool_input.request,
+            auth=basic_contexts,
+            options=tool_input.options,
+        ) if basic_contexts else None
+
         start_ts = time.time()
         started_at = utc_now_iso()
 
@@ -157,7 +172,13 @@ class Orchestrator:
                     continue
 
                 try:
-                    result: ToolResult = tool.run(tool_input)
+                    # 브루트포스 계열은 basic 컨텍스트가 담긴 별도 ToolInput 사용
+                    active_input = (
+                        cred_tool_input
+                        if tid in _CREDENTIAL_TOOLS and cred_tool_input
+                        else tool_input
+                    )
+                    result: ToolResult = tool.run(active_input)
 
                 except Exception as exc:
                     ended_at = utc_now_iso()

@@ -26,6 +26,19 @@ def _dedup(ids: list[str]) -> list[str]:
     return result
 
 
+# 접근 제어 도구는 리소스 상태에 의존하므로 최우선 실행
+_ACCESS_CONTROL_TOOLS = {"bfla", "rbac_check", "idor_bola"}
+# 반복/파괴적 도구는 마지막 실행
+_DESTRUCTIVE_TOOLS    = {"rate_limit_check", "retry_handling"}
+
+
+def _prioritize(tool_ids: list[str]) -> list[str]:
+    first  = [t for t in tool_ids if t in _ACCESS_CONTROL_TOOLS]
+    last   = [t for t in tool_ids if t in _DESTRUCTIVE_TOOLS]
+    middle = [t for t in tool_ids if t not in _ACCESS_CONTROL_TOOLS and t not in _DESTRUCTIVE_TOOLS]
+    return first + middle + last
+
+
 class ScenarioPlanner:
     """
     FeatureSet을 분석해 OWASP 시나리오 후보 및 실행 도구를 선정한다.
@@ -118,22 +131,21 @@ class ScenarioPlanner:
             _get(endpoint, "resource_context") if endpoint else False
         )
 
-        if requires_auth:
-            a01_tools: list[str] = []
+        a01_tools: list[str] = []
 
+        # bfla/rbac_check: requires_auth 무관, admin/role 제한 신호만으로 선정
+        if has_admin or has_role_res:
+            a01_tools.append("bfla")
+
+        if (has_admin or has_role_res) and auth_count >= 2:
+            a01_tools.append("rbac_check")
+
+        if requires_auth:
             # idor_bola: 리소스 식별자 + auth_contexts >= 2
             if (has_resource or resource_ctx) and auth_count >= 2:
                 a01_tools.append("idor_bola")
             elif has_resource or resource_ctx:
                 missing.append("auth_contexts")
-
-            # bfla: admin 또는 role 제한 엔드포인트
-            if has_admin or has_role_res:
-                a01_tools.append("bfla")
-
-            # rbac_check: admin + auth_contexts >= 2
-            if (has_admin or has_role_res) and auth_count >= 2:
-                a01_tools.append("rbac_check")
 
             # forced_browsing, cors_check: 항상
             a01_tools.append("forced_browsing")
@@ -147,6 +159,7 @@ class ScenarioPlanner:
             if has_enum or has_user_input:
                 a01_tools.append("parameter_tamper")
 
+        if a01_tools:
             candidates.append("A01")
             tool_ids.extend(a01_tools)
 
@@ -279,9 +292,10 @@ class ScenarioPlanner:
         candidates.append("A10")
         tool_ids.extend(A10_BASELINE_TOOL_IDS)
 
+        deduped = _dedup(tool_ids)
         return PlannerOutput(
             owasp_candidates=candidates,
-            tool_ids=_dedup(tool_ids),
-            need_more_context=bool(missing) and not _dedup(tool_ids),
+            tool_ids=_prioritize(deduped),
+            need_more_context=bool(missing) and not deduped,
             missing=missing,
         )
