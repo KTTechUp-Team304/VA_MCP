@@ -47,8 +47,8 @@ class ScenarioPlanner:
 
       A01 Broken Access Control:
         idor_bola        : requires_auth AND has_resource_identifier AND auth_contexts >= 2
-        bfla             : requires_auth AND (has_admin_feature OR has_role_restriction)
-        rbac_check       : requires_auth AND (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
+        bfla             : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
+        rbac_check       : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
         forced_browsing  : requires_auth (항상)
         http_method_tamper: requires_auth AND is_state_changing
         parameter_tamper : requires_auth AND (has_enum_input OR has_user_input)
@@ -115,6 +115,7 @@ class ScenarioPlanner:
         is_state        = _get(feature_set, "is_state_changing")
         has_enum        = _get(feature_set, "has_enum_input")
         has_user_input  = _get(feature_set, "has_user_input")
+        has_cred        = _get(feature_set, "has_credential_fields")
 
         fs_auth_count = _get(feature_set, "auth_account_count", 0)
         auth_count = int(fs_auth_count or 0)
@@ -133,8 +134,8 @@ class ScenarioPlanner:
 
         a01_tools: list[str] = []
 
-        # bfla/rbac_check: requires_auth 무관, admin/role 제한 신호만으로 선정
-        if has_admin or has_role_res:
+        # bfla/rbac_check: requires_auth 무관, admin/role 제한 신호 + auth_contexts >= 2
+        if (has_admin or has_role_res) and auth_count >= 2:
             a01_tools.append("bfla")
 
         if (has_admin or has_role_res) and auth_count >= 2:
@@ -200,7 +201,7 @@ class ScenarioPlanner:
 
         if has_user_input:
             # sql_injection
-            if has_free_text or has_enum:
+            if has_free_text or has_enum or has_cred:
                 a05_tools.append("sql_injection")
 
             # cmd_injection
@@ -245,7 +246,6 @@ class ScenarioPlanner:
             tool_ids.extend(a06_tools)
 
         # ── A07: Authentication Failures ──────────────────────────────
-        has_cred        = _get(feature_set, "has_credential_fields")
         is_login_or_cred = is_login or has_cred
 
         a07_tools: list[str] = []
