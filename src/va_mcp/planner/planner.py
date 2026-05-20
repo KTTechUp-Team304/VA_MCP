@@ -47,7 +47,7 @@ class ScenarioPlanner:
 
       A01 Broken Access Control:
         idor_bola        : requires_auth AND has_resource_identifier AND auth_contexts >= 2
-        bfla             : has_admin_feature OR has_role_restriction
+        bfla             : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
         rbac_check       : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
         forced_browsing  : requires_auth (항상)
         http_method_tamper: requires_auth AND is_state_changing
@@ -134,8 +134,8 @@ class ScenarioPlanner:
 
         a01_tools: list[str] = []
 
-        # bfla/rbac_check: requires_auth 무관, admin/role 제한 신호만으로 선정
-        if has_admin or has_role_res:
+        # bfla/rbac_check: requires_auth 무관, admin/role 제한 신호 + auth_contexts >= 2
+        if (has_admin or has_role_res) and auth_count >= 2:
             a01_tools.append("bfla")
 
         if (has_admin or has_role_res) and auth_count >= 2:
