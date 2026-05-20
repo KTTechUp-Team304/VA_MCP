@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "va-mcp": {
+      "type": "stdio",
+      "command": "C:\\VA_MCP\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\VA_MCP\\src\\va_mcp\\server.py"]
+    }
+  }
+}
