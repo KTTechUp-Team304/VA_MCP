@@ -104,6 +104,11 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
     )
 
 
+_CREDENTIAL_TOOLS = frozenset(
+    {"auth_bruteforce", "auth_lockout", "auth_rate_limit", "auth_enum"}
+)
+
+
 class Orchestrator:
     """
     실행 전용 Orchestrator.
@@ -118,72 +123,75 @@ class Orchestrator:
     def __init__(self):
         self.tools = discover_tools()
 
-    def run_tools(
+    def _merge_auth_contexts(self, profile: EndpointProfile) -> AuthProvider | None:
+        """auth_provider로 토큰 발급 후 profile.auth_contexts에 병합한다."""
+        if not (profile.auth and profile.auth.login and profile.auth.accounts):
+            return None
+
+        provider = AuthProvider(profile.base_url, profile.auth)
+        resolved = provider.provide_auth()
+        if resolved:
+            existing_roles = {
+                getattr(ctx, "role", None) for ctx in (profile.auth_contexts or [])
+            }
+            merged = list(profile.auth_contexts or [])
+            for ctx in resolved:
+                if ctx.role not in existing_roles:
+                    merged.append(ctx)
+            profile.auth_contexts = merged
+        return provider
+
+    def run(
         self,
-        planner_output: PlannerOutput,
+        tool_ids: list[str],
         profile: EndpointProfile,
+        *,
+        provider: AuthProvider | None = None,
+        logout_when_done: bool = True,
     ) -> list[ToolResult]:
         """
-        PlannerOutput.tool_ids 를 기반으로
-        등록된 tool 을 순차 실행한다.
+        tool_ids에 해당하는 등록 tool을 순차 실행한다.
+
+        ScenarioRunner가 OWASP 카테고리별로 호출한다.
+        provider를 넘기면 인증 컨텍스트 병합·로그아웃을 호출자가 제어할 수 있다.
         """
-
-        if planner_output.need_more_context:
-            return []
-
-        # auth_provider로 토큰 발급 및 auth_contexts 주입
-        provider: AuthProvider | None = None
-        if profile.auth and profile.auth.login and profile.auth.accounts:
-            provider = AuthProvider(profile.base_url, profile.auth)
-            resolved = provider.provide_auth()
-            if resolved:
-                existing_roles = {
-                    getattr(ctx, "role", None)
-                    for ctx in (profile.auth_contexts or [])
-                }
-                merged = list(profile.auth_contexts or [])
-                for ctx in resolved:
-                    if ctx.role not in existing_roles:
-                        merged.append(ctx)
-                profile.auth_contexts = merged
+        own_provider = provider
+        if own_provider is None:
+            own_provider = self._merge_auth_contexts(profile)
 
         tool_input = build_tool_input(profile)
-
-        # 브루트포스 계열 툴 전용 basic 컨텍스트 (원본 자격증명 보존)
-        _CREDENTIAL_TOOLS = {"auth_bruteforce", "auth_lockout", "auth_rate_limit", "auth_enum"}
-        basic_contexts = provider.provide_basic_auth() if provider else []
-        cred_tool_input = ToolInput(
-            target=tool_input.target,
-            request=tool_input.request,
-            auth=basic_contexts,
-            options=tool_input.options,
-        ) if basic_contexts else None
+        basic_contexts = own_provider.provide_basic_auth() if own_provider else []
+        cred_tool_input = (
+            ToolInput(
+                target=tool_input.target,
+                request=tool_input.request,
+                auth=basic_contexts,
+                options=tool_input.options,
+            )
+            if basic_contexts
+            else None
+        )
 
         start_ts = time.time()
         started_at = utc_now_iso()
-
         results: list[ToolResult] = []
 
         try:
-            for tid in planner_output.tool_ids:
+            for tid in tool_ids:
                 tool = self.tools.get(tid)
-
                 if not tool:
                     continue
 
                 try:
-                    # 브루트포스 계열은 basic 컨텍스트가 담긴 별도 ToolInput 사용
                     active_input = (
                         cred_tool_input
                         if tid in _CREDENTIAL_TOOLS and cred_tool_input
                         else tool_input
                     )
                     result: ToolResult = tool.run(active_input)
-
                 except Exception as exc:
                     ended_at = utc_now_iso()
                     duration_ms = int((time.time() - start_ts) * 1000)
-
                     result = ToolResult(
                         tool_id=tid,
                         tool_name=getattr(tool, "tool_name", tid),
@@ -207,10 +215,29 @@ class Orchestrator:
                     )
 
                 results.append(result)
-
         finally:
-            # 스캔 완료 후 토큰 폐기
-            if provider:
-                provider.logout_all()
+            if logout_when_done and own_provider is not None and provider is None:
+                own_provider.logout_all()
 
         return results
+
+    def run_tools(
+        self,
+        planner_output: PlannerOutput,
+        profile: EndpointProfile,
+    ) -> list[ToolResult]:
+        """PlannerOutput.tool_ids 기준으로 tool을 한 번에 실행한다 (하위 호환)."""
+        if planner_output.need_more_context:
+            return []
+
+        provider = self._merge_auth_contexts(profile)
+        try:
+            return self.run(
+                planner_output.tool_ids,
+                profile,
+                provider=provider,
+                logout_when_done=False,
+            )
+        finally:
+            if provider:
+                provider.logout_all()

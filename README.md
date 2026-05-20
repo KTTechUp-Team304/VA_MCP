@@ -17,7 +17,8 @@ Cursor·Claude Desktop 등 MCP를 지원하는 에이전트에 연결해 사용�
 | `ping`                  | 서버 연결 확인                                                                          |
 | _(개별 점검 도구)_      | `sql_injection`, `idor_bola`, `jwt_validation` 등 — Planner가 선택하거나 직접 호출 가능 |
 
-점검 실행 결과는 `outputs/runs/<run_id>/`에 JSON·요약(`summary.md`)으로 저장됩니다.
+- **사람용 분석 보고서**: `reports/{METHOD}_{path}_{시각}.md` (저장소 루트)
+- **개발·디버깅 산출물**: `outputs/runs/<run_id>/`, `outputs/logs/` (`DUMP_ARTIFACTS=true` 시)
 
 ## 요구 사항
 
@@ -95,18 +96,47 @@ macOS 기준 설정 파일: `~/Library/Application Support/Claude/claude_desktop
 }
 ```
 
-- `status: "analyzed"` — 점검 완료, `run_id`로 산출물 폴더 확인
+- `status: "analyzed"` — 점검 완료
 - `status: "need_more_context"` — `missing` 필드를 보완한 뒤 다시 호출
 
 ### 3) 결과 확인
 
-| 경로                                     | 내용             |
-| ---------------------------------------- | ---------------- |
-| `outputs/runs/<run_id>/summary.md`       | 한눈에 보는 요약 |
-| `outputs/runs/<run_id>/04_tool_results/` | 도구별 상세 결과 |
-| `outputs/logs/va-mcp.log`                | 전체 실행 로그   |
+결과는 **두 갈래**로 제공됩니다.
 
-MCP 연결 문제는 Cursor **Output → MCP Logs**, 서버 내부 로그는 위 파일을 참고하세요.
+#### A. MCP 응답 (에이전트 → 대화창)
+
+`analyze_endpoint`가 반환하는 JSON을 Cursor 에이전트가 읽고 채팅으로 요약합니다. 파일을 열지 않아도 동작합니다.
+
+| 필드 | 설명 |
+| ---- | ---- |
+| `status` | `analyzed` / `need_more_context` / `invalid_input` |
+| `run_id` | 실행 추적 ID (`outputs/runs/` 폴더명과 동일) |
+| `tool_results` | 도구별 점검 결과 (status, severity, evidence, 권고 등) |
+| `endpoint_report` | OWASP 시나리오별 집계 JSON |
+| `report_paths` | 저장된 리포트 파일 경로 (`report_md`, `report_json`, `report_basename`) |
+
+#### B. 사람용 분석 보고서 (`reports/`)
+
+저장소 **루트**의 `reports/` 폴더에 Markdown·JSON이 저장됩니다. IDE에서 직접 열어 보거나 팀과 공유할 때 사용합니다.
+
+| 파일 | 설명 |
+| ---- | ---- |
+| `reports/{METHOD}_{path}_{시각}_{접미사}.md` | 가독성 좋은 분석 보고서 (요약 표, OWASP별 상세) |
+| `reports/{METHOD}_{path}_{시각}_{접미사}.json` | 동일 내용의 구조화 JSON |
+
+예: `reports/GET_api_admin_2026-05-20T05-42-56_9ddf04.md`
+
+#### C. 개발·디버깅 산출물 (`outputs/`, 선택)
+
+`DUMP_ARTIFACTS=true`일 때 단계별 JSON·run 로그가 추가로 쌓입니다. 일반 사용자는 `reports/`만 보면 됩니다.
+
+| 경로 | 내용 |
+| ---- | ---- |
+| `outputs/runs/<run_id>/summary.md` | run 단위 요약 |
+| `outputs/runs/<run_id>/04_tool_results/` | 도구별 상세 JSON |
+| `outputs/logs/va-mcp.log` | 서버 전체 로그 |
+
+MCP 연결 문제는 Cursor **Output → MCP Logs**, 서버 내부 로그는 `outputs/logs/va-mcp.log`를 참고하세요.
 
 ## 업데이트
 
@@ -126,8 +156,9 @@ uv tool install --reinstall .
 | 변수             | 기본값      | 설명                            |
 | ---------------- | ----------- | ------------------------------- |
 | `LOG_LEVEL`      | `INFO`      | 로그 상세도 (`DEBUG` 등)        |
-| `OUTPUT_DIR`     | `./outputs` | 산출물 루트                     |
-| `DUMP_ARTIFACTS` | `false`     | `true` 시 단계별 JSON 덤프 강화 |
+| `OUTPUT_DIR`     | (자동) `저장소/outputs` | 개발·디버깅 산출물 (runs, logs) |
+| `REPORTS_DIR`    | (자동) `저장소/reports` | 사람용 취약점 분석 리포트 (.md / .json) |
+| `DUMP_ARTIFACTS` | `false`     | `true` 시 `outputs/runs/`에 단계별 JSON 덤프 |
 
 ## 문제 해결
 

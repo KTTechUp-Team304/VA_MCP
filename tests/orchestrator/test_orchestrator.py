@@ -53,7 +53,7 @@ def sample_profile():
         query={"debug": "1"},
         params={},
         body={"foo": "bar"},
-        auth_contexts=[{"auth_type": "basic", "token": "xxx"}],
+        auth_contexts=[{"role": "user", "auth_type": "basic", "token": "xxx"}],
     )
 
 
@@ -80,7 +80,10 @@ def test_build_tool_input_maps_everything(sample_profile):
     assert ti.request.headers == {"Content-Type": "application/json"}
     assert ti.request.query == {"debug": "1"}
     assert ti.request.body == {"foo": "bar"}
-    assert ti.auth == [{"auth_type": "basic", "token": "xxx"}]
+    assert len(ti.auth) == 1
+    assert ti.auth[0].role == "user"
+    assert ti.auth[0].auth_type == "basic"
+    assert ti.auth[0].token == "xxx"
 
     assert isinstance(ti.options, ToolOptions)
 
@@ -91,6 +94,13 @@ def test_build_tool_input_maps_everything(sample_profile):
 # -------------------------
 # success case
 # -------------------------
+def test_run_success(sample_profile):
+    orch = Orchestrator()
+    results = orch.run(["dummy"], sample_profile)
+    assert len(results) == 1
+    assert results[0].status == ToolStatus.PASSED.value
+
+
 def test_run_tools_success(sample_profile):
     orch = Orchestrator()
 

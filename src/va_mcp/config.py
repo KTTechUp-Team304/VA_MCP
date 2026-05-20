@@ -15,10 +15,53 @@ APP_NAME = os.getenv("APP_NAME", "va-mcp")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 DUMP_ARTIFACTS = os.getenv("DUMP_ARTIFACTS", "false").lower() == "true"
 
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "outputs"))
+
+def _find_repo_root(start: Path | None = None) -> Path | None:
+    """실행 cwd 기준으로 VA-MCP 저장소 루트(src/va_mcp)를 찾는다."""
+    for base in [start or Path.cwd(), *list((start or Path.cwd()).parents)]:
+        if (base / "src" / "va_mcp").is_dir() and (base / "pyproject.toml").is_file():
+            return base
+    return None
+
+
+def resolve_output_dir() -> Path:
+    """산출물 루트 경로. OUTPUT_DIR은 상대 경로면 cwd 기준으로 해석한다."""
+    raw = os.getenv("OUTPUT_DIR")
+    if raw:
+        path = Path(raw)
+        if path.is_absolute():
+            return path.resolve()
+        return (Path.cwd() / path).resolve()
+
+    repo = _find_repo_root()
+    if repo is not None:
+        return (repo / "outputs").resolve()
+    return (BASE_DIR / "outputs").resolve()
+
+
+def resolve_reports_dir() -> Path:
+    """
+    사람용 취약점 분석 리포트 저장 경로 (저장소 루트 /reports).
+
+    OUTPUT_DIR(outputs/)와 분리 — outputs는 개발·디버깅 산출물용.
+    """
+    raw = os.getenv("REPORTS_DIR")
+    if raw:
+        path = Path(raw)
+        if path.is_absolute():
+            return path.resolve()
+        return (Path.cwd() / path).resolve()
+
+    repo = _find_repo_root()
+    if repo is not None:
+        return (repo / "reports").resolve()
+    return (BASE_DIR / "reports").resolve()
+
+
+OUTPUT_DIR = resolve_output_dir()
+REPORTS_OUTPUT_DIR = resolve_reports_dir()
 RAW_OUTPUT_DIR = OUTPUT_DIR / "raw"
 FINDINGS_OUTPUT_DIR = OUTPUT_DIR / "findings"
-REPORTS_OUTPUT_DIR = OUTPUT_DIR / "reports"
 LOGS_OUTPUT_DIR = OUTPUT_DIR / "logs"
 RUNS_OUTPUT_DIR = OUTPUT_DIR / "runs"
 
@@ -30,9 +73,10 @@ _LOGGING_INITIALIZED_FLAG = "_va_mcp_logging_initialized"
 def ensure_output_dirs() -> None:
     """va-mcp가 사용하는 출력 디렉토리들을 생성한다."""
     for d in (
+        OUTPUT_DIR,
+        REPORTS_OUTPUT_DIR,
         RAW_OUTPUT_DIR,
         FINDINGS_OUTPUT_DIR,
-        REPORTS_OUTPUT_DIR,
         LOGS_OUTPUT_DIR,
         RUNS_OUTPUT_DIR,
     ):
