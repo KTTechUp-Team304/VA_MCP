@@ -10,21 +10,27 @@ from va_mcp.feature_extractor import FeatureExtractor, FeatureSet
 from va_mcp.observability import RunRecorder
 from va_mcp.orchestrator.orchestrator import Orchestrator
 from va_mcp.planner.planner import ScenarioPlanner
+from va_mcp.reporting.report_generator import (
+    endpoint_report_to_dict,
+    flatten_tool_results,
+    write_vulnerability_report,
+)
+from va_mcp.scenario.runner import ScenarioRunner
 
 logger = logging.getLogger(__name__)
 
 _extractor = FeatureExtractor()
 _planner = ScenarioPlanner()
 _orchestrator = Orchestrator()
+_scenario_runner = ScenarioRunner(_orchestrator)
 
 
 def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
     """
-    EndpointProfile 파싱 → FeatureExtractor → ScenarioPlanner → Orchestrator 순으로 실행한다.
+    EndpointProfile 파싱 → FeatureExtractor → ScenarioPlanner → ScenarioRunner 순으로 실행한다.
 
-    각 단계의 입출력은 outputs/runs/<run_id>/ 폴더에 JSON으로 dump되며,
-    동일한 흐름이 outputs/logs/va-mcp.log 와 outputs/runs/<run_id>/run.log에 로그로도 남는다.
-    DUMP_ARTIFACTS=false 환경에서는 dump를 건너뛰고 run_id만 부여한다.
+    각 단계의 입출물은 outputs/runs/<run_id>/ 폴더에 JSON으로 dump되며,
+    최종 취약점 리포트는 reports/<엔드포인트>_<시각>.md|.json 에 저장된다.
     """
     recorder = RunRecorder()
     logger.info("analyze_endpoint start run_id=%s", recorder.run_id)
@@ -56,6 +62,16 @@ def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
             planner_output.need_more_context,
         )
 
+        endpoint_report = _scenario_runner.run(planner_output, profile)
+        report_dict = endpoint_report_to_dict(endpoint_report)
+        recorder.dump("05_endpoint_report.json", report_dict)
+
+        report_paths = write_vulnerability_report(
+            endpoint_report,
+            run_id=recorder.run_id,
+            run_dir=recorder.run_dir,
+        )
+
         if planner_output.need_more_context:
             logger.warning(
                 "need_more_context: missing=%s",
@@ -69,6 +85,7 @@ def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
                     "owasp_candidates": planner_output.owasp_candidates,
                     "tool_ids": planner_output.tool_ids,
                     "missing": planner_output.missing,
+                    "report_paths": report_paths,
                 },
             )
             return {
@@ -77,9 +94,11 @@ def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
                 "missing": planner_output.missing,
                 "endpoint_profile": profile_dict,
                 "feature_set": feature_dict,
+                "endpoint_report": report_dict,
+                "report_paths": report_paths,
             }
 
-        tool_results = _orchestrator.run_tools(planner_output, profile)
+        tool_results = flatten_tool_results(endpoint_report)
         result_dicts = [asdict(r) for r in tool_results]
 
         for rd in result_dicts:
@@ -97,7 +116,7 @@ def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
             if rd.get("status") == "vulnerable"
         ]
         logger.info(
-            "orchestrator done: tools=%d counts=%s vulnerable=%d",
+            "scenario runner done: tools=%d counts=%s vulnerable=%d",
             len(result_dicts),
             dict(status_counts),
             len(vulnerable),
@@ -112,6 +131,7 @@ def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
                 "tool_ids": planner_output.tool_ids,
                 "status_counts": dict(status_counts),
                 "vulnerable_findings": vulnerable,
+                "report_paths": report_paths,
             },
         )
 
@@ -123,6 +143,8 @@ def analyze_endpoint(raw_input: dict[str, Any]) -> dict[str, Any]:
             "owasp_candidates": planner_output.owasp_candidates,
             "tool_ids": planner_output.tool_ids,
             "tool_results": result_dicts,
+            "endpoint_report": report_dict,
+            "report_paths": report_paths,
         }
 
     except EndpointProfileValidationError as e:

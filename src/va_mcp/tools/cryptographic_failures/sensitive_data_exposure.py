@@ -19,17 +19,9 @@ import requests
 import time
 from typing import Any, Dict, List, Tuple
 
-from va_mcp.core import (
-    BaseTool,
-    ToolInput,
-    ToolResult,
-    Evidence,
-    ToolStatus,
-    Severity,
-    Confidence,
-    ErrorCode,
-    AuthContext,
-)
+from va_mcp.core.base import BaseTool
+from va_mcp.core.schemas import ToolInput, ToolResult, Evidence, AuthContext
+from va_mcp.core.constants import ToolStatus, Severity, Confidence, ErrorCode
 from va_mcp.core.utils import (
     build_tool_error,
     mask_sensitive,
@@ -59,7 +51,7 @@ DEFAULT_PATTERNS: List[Tuple[str, str]] = [
     ("AWS Access Key", r"AKIA[0-9A-Z]{16}"),
     ("Private Key 헤더", r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     ("서버 내부 파일 경로", r'(?i)["\']?stored_?path["\']?\s*:\s*["\'][^"\']+["\']'),
-    ("Unix 절대 경로 노출", r'["\'][/\\](?:uploads|var|tmp|home|srv|opt|etc)[/\\][^"\']{3,}["\']'),
+    ("Unix 절대 경로 노출", r'["\'][/\\](?:var|tmp|home|srv|opt|etc)[/\\][^"\']{3,}["\']'),
 ]
 
 # 탐지용 응답 텍스트 최대 크기 (500KB) — 대용량 응답 성능 보호

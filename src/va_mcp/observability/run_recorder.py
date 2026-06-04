@@ -184,6 +184,20 @@ class RunRecorder:
                     f"- **{v.get('tool_id')}** ({v.get('severity')}): {v.get('title')}"
                 )
 
+        report_paths = extra.get("report_paths")
+        if report_paths:
+            lines.append("")
+            lines.append("## 취약점 분석 리포트")
+            md = report_paths.get("report_md")
+            js = report_paths.get("report_json")
+            if md:
+                lines.append(f"- Markdown: `{md}`")
+            if js:
+                lines.append(f"- JSON: `{js}`")
+            run_md = report_paths.get("run_report_md")
+            if run_md:
+                lines.append(f"- Run copy: [05_vulnerability_report.md](./05_vulnerability_report.md)")
+
         lines.extend(
             [
                 "",
@@ -193,6 +207,8 @@ class RunRecorder:
                 "- [02_feature_set.json](./02_feature_set.json)",
                 "- [03_planner_output.json](./03_planner_output.json)",
                 "- [04_tool_results/](./04_tool_results/)",
+                "- [05_endpoint_report.json](./05_endpoint_report.json)",
+                "- [05_vulnerability_report.md](./05_vulnerability_report.md)",
                 "- [run.log](./run.log)",
                 "",
             ]

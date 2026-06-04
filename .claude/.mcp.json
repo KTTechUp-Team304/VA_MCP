@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "va-mcp": {
+      "command": "va-mcp"
+    }
+  }
+}

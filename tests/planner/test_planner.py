@@ -143,12 +143,12 @@ def test_a01_not_selected_without_requires_auth(planner):
 
 
 def test_a01_vertical_selected_by_admin_feature(planner):
-    """requires_auth + has_admin_feature → bfla 선정. rbac_check는 auth_contexts>=2 필요."""
-    fs = FeatureSet(requires_auth=True, has_admin_feature=True)
+    """requires_auth + has_admin_feature + auth_contexts>=2 → bfla/rbac_check 선정."""
+    fs = FeatureSet(requires_auth=True, has_admin_feature=True, auth_contexts=2)
     out = planner.plan(fs)
     assert "A01" in out.owasp_candidates
     assert "bfla" in out.tool_ids
-    assert "rbac_check" not in out.tool_ids  # auth_contexts < 2
+    assert "rbac_check" in out.tool_ids
 
 
 def test_a01_vertical_rbac_requires_two_auth_contexts(planner):
@@ -159,12 +159,12 @@ def test_a01_vertical_rbac_requires_two_auth_contexts(planner):
 
 
 def test_a01_vertical_selected_by_role_restriction(planner):
-    """requires_auth + has_role_restriction → bfla 선정. rbac_check는 auth_contexts>=2 필요."""
-    fs = FeatureSet(requires_auth=True, has_role_restriction=True)
+    """requires_auth + has_role_restriction + auth_contexts>=2 → bfla/rbac_check 선정."""
+    fs = FeatureSet(requires_auth=True, has_role_restriction=True, auth_contexts=2)
     out = planner.plan(fs)
     assert "A01" in out.owasp_candidates
     assert "bfla" in out.tool_ids
-    assert "rbac_check" not in out.tool_ids  # auth_contexts < 2
+    assert "rbac_check" in out.tool_ids
 
 
 def test_a01_bfla_not_selected_without_admin(planner):
