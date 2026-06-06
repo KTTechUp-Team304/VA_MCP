@@ -183,10 +183,11 @@ class FeatureExtractor:
         path 또는 description에 login 관련 키워드가 포함되어 있는지 확인한다.
         path 기반 판단은 보조 신호이며, description 키워드 매칭과 함께 사용한다.
         """
-        path_lower = profile.path.lower()
+        # 세그먼트 정확 매칭 — sub-word 미적용: last-login → {last, login}이 되면 오탐 재발
+        path_parts = {p for p in profile.path.lower().split("/") if p}
         desc_lower = profile.description.lower()
         return (
-            any(kw in path_lower for kw in _LOGIN_KEYWORDS)
+            bool(path_parts & _LOGIN_KEYWORDS)
             or any(kw in desc_lower for kw in _LOGIN_KEYWORDS)
         )
 

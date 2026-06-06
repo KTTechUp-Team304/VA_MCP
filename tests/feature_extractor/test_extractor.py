@@ -240,6 +240,22 @@ def test_state_changing_by_delete_method(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
+# F-4: last-login 세그먼트 오탐 방지
+# ------------------------------------------------------------------ #
+
+def test_last_login_not_login_endpoint(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="GET",
+        path="/api/users/last-login",
+        description="마지막 로그인 시각 조회",
+    )
+    result = extractor.extract(profile)
+
+    assert result.is_login_endpoint is False
+
+
+# ------------------------------------------------------------------ #
 # 12. 최소 엔드포인트 — 모든 플래그 False
 # ------------------------------------------------------------------ #
 
