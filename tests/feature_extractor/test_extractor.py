@@ -256,6 +256,36 @@ def test_last_login_not_login_endpoint(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
+# F-6: administrator 오탐 방지 + super-admin 정탐 확인
+# ------------------------------------------------------------------ #
+
+def test_administrator_not_admin_feature(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="GET",
+        path="/api/users/administrator",
+        description="관리자 계정 조회",
+    )
+    result = extractor.extract(profile)
+
+    # "administrator" ≠ sub-word "admin" → 오탐 방지
+    assert result.has_admin_feature is False
+
+
+def test_super_admin_is_admin_feature(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="GET",
+        path="/api/super-admin/settings",
+        description="슈퍼 관리자 설정",
+    )
+    result = extractor.extract(profile)
+
+    # "super-admin" → sub-words {super, admin} → "admin" 탐지
+    assert result.has_admin_feature is True
+
+
+# ------------------------------------------------------------------ #
 # 12. 최소 엔드포인트 — 모든 플래그 False
 # ------------------------------------------------------------------ #
 

@@ -206,12 +206,16 @@ class FeatureExtractor:
     # ------------------------------------------------------------------ #
 
     def _has_admin_feature(self, profile: EndpointProfile) -> bool:
-        """path에 'admin' 키워드가 포함되어 있는지 확인. (보조 신호 — path 기반)"""
-        return "admin" in profile.path.lower()
+        """path에 'admin' sub-word가 존재하는지 확인. (보조 신호 — path 기반)"""
+        # sub-word 매칭: super-admin, admin-panel 등 하이픈 결합도 탐지
+        # substring 미적용: administrator → {administrator} ≠ "admin" → 오탐 방지
+        return "admin" in self._path_sub_words(profile.path)
 
     def _has_debug_feature(self, profile: EndpointProfile) -> bool:
-        """path에 'debug' 키워드가 포함되어 있는지 확인. (보조 신호 — path 기반)"""
-        return "debug" in profile.path.lower()
+        """path에 'debug' sub-word가 존재하는지 확인. (보조 신호 — path 기반)"""
+        # sub-word 매칭: debug-mode 등 하이픈 결합도 탐지
+        # substring 미적용: debugger → {debugger} ≠ "debug" → 오탐 방지
+        return "debug" in self._path_sub_words(profile.path)
 
     def _has_logging_feature(self, profile: EndpointProfile) -> bool:
         """path 또는 description에 log/audit 관련 키워드가 포함되어 있는지 확인."""
@@ -258,3 +262,18 @@ class FeatureExtractor:
             return False
         # 소문자 변환 후 집합 교차 연산으로 O(n) 탐색
         return bool({k.lower() for k in data} & keywords)
+
+    @staticmethod
+    def _path_sub_words(path: str) -> frozenset[str]:
+        """URL을 /, -, _ 기준으로 분리해 하위 단어(sub-word) 집합을 반환한다.
+
+        예) /api/super-admin → {api, super, admin}
+            /api/audit-log  → {api, audit, log}
+        로그인 오탐 방지 목적으로 _is_login_endpoint에는 사용하지 않는다.
+        """
+        words: set[str] = set()
+        for seg in path.lower().split("/"):
+            for part in re.split(r"[-_]", seg):
+                if part:
+                    words.add(part)
+        return frozenset(words)
