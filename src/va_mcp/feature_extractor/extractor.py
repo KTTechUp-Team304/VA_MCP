@@ -135,14 +135,18 @@ class FeatureExtractor:
         if re.search(r"\{[^}]+\}", profile.path):
             return True
 
-        # camelCase(userId→userid)와 스네이크케이스(user_id) 모두 처리하기 위해
-        # endswith("id")와 endswith("_id")를 함께 사용한다
+        # 4가지 패턴만 허용 — endswith("id") 단독 사용 시 is_valid 등 오탐 발생
         for data in (profile.body, profile.query, profile.params):
             if not data:
                 continue
             for key in data:
                 key_lower = key.lower()
-                if key_lower.endswith("_id") or key_lower.endswith("id"):
+                if (
+                    key_lower == "id"                       # 단독 "id" 키
+                    or key_lower.endswith("_id")            # snake_case: user_id, order_id
+                    or bool(re.search(r"[a-z]Id$", key))   # camelCase: userId, orderId
+                    or bool(re.search(r"[a-z]ID$", key))   # 대문자ID: userID, orderID
+                ):
                     return True
 
         return False

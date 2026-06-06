@@ -286,6 +286,24 @@ def test_super_admin_is_admin_feature(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
+# F-5: is_valid 키 오탐 방지
+# ------------------------------------------------------------------ #
+
+def test_is_valid_not_resource_identifier(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="POST",
+        path="/api/orders/validate",
+        body={"is_valid": True, "amount": 100},
+        description="주문 유효성 검사",
+    )
+    result = extractor.extract(profile)
+
+    # "is_valid".endswith("id") → True 오탐 방지 — 4패턴 매칭으로 False
+    assert result.has_resource_identifier is False
+
+
+# ------------------------------------------------------------------ #
 # F-1: login path에서 "log" substring 오탐 방지
 # ------------------------------------------------------------------ #
 
