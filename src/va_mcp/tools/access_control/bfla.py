@@ -5,7 +5,8 @@ BFLA (Broken Function Level Authorization) 테스트 도구.
 RBAC가 수평적 접근 제어라면, BFLA는 수직적(기능 레벨) 접근 제어를 테스트한다.
 
 auth 구성:
-  auth[0] = 낮은 권한 사용자 (공격자 역할)
+  auth[0]  = 낮은 권한 사용자 (공격자 역할)
+  auth[-1] = 높은 권한 사용자 (기준값 역할 — GET/HEAD에서 사전 검증에만 사용)
 
 request 구성:
   request.path = 관리자 전용 기능 경로 (예: /api/admin/users)
@@ -13,6 +14,11 @@ request 구성:
 extra 옵션:
   extra["additional_paths"] = ["/api/admin/reports", "/api/admin/settings"]
     → 추가로 테스트할 관리자 경로 목록 (max_requests 제한 적용)
+
+판정 흐름:
+  GET/HEAD : auth[-1] 사전 검증(2xx 확인) → auth[0] 요청 → 2xx이면 BFLA
+  그 외 메서드: auth[0] 직접 요청 → 2xx이면 BFLA
+               (POST/DELETE 등에서 auth[-1] 선실행 시 데이터 변경 방지)
 
 SKIPPED 조건:
   - request 없음
@@ -48,11 +54,15 @@ from va_mcp.core.resolvers.auth_resolver import (
     CredentialResolverError,
 )
 
+# GET/HEAD는 읽기 전용이므로 auth[-1] 사전 검증 선실행 가능
+# POST/PUT/PATCH/DELETE는 선실행 시 서버 데이터가 변경되므로 생략
+_READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
+
 
 class BflaTool(BaseTool):
     tool_id = "bfla"
     tool_name = "BFLA Testing"
-    tool_version = "0.1.0"
+    tool_version = "0.2.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         start_ts = time.time()
@@ -72,6 +82,7 @@ class BflaTool(BaseTool):
         )
 
         req = tool_input.request
+        method = req.method.upper()
         base_url = tool_input.target.base_url.rstrip("/")
         timeout_s = (
             tool_input.options.timeout / 1000
@@ -86,12 +97,21 @@ class BflaTool(BaseTool):
 
         attacker: AuthContext = tool_input.auth[0]
 
-        # 3) resolver로 auth 헤더 생성
+        # 3) attacker(저권한) auth 헤더 생성
         try:
             _ = parse_credentials(attacker)
-            auth_headers = resolve_auth_headers(attacker)
-        except CredentialResolverError as e:
+            attacker_headers = resolve_auth_headers(attacker)
+        except CredentialResolverError:
             return self._skipped(started_at, "Credential 해석 실패")
+
+        # GET/HEAD에서만 auth[-1](고권한) 사전 검증 헤더 준비
+        # 상태 변경 메서드에서 auth[-1]을 먼저 실행하면 실제 데이터가 변경될 수 있어 생략
+        privileged_headers: Dict[str, str] | None = None
+        if method in _READ_METHODS and len(tool_input.auth) >= 2:
+            try:
+                privileged_headers = resolve_auth_headers(tool_input.auth[-1])
+            except CredentialResolverError:
+                privileged_headers = None  # 생성 실패 시 사전 검증 없이 진행
 
         # 4) 테스트할 경로 목록
         additional_paths: List[str] = extra.get("additional_paths", [])
@@ -107,22 +127,38 @@ class BflaTool(BaseTool):
                     break
 
                 url = f"{base_url}/{path.lstrip('/')}"
+
+                # GET/HEAD: auth[-1](고권한) 사전 검증
+                # 고권한도 2xx를 받지 못하면 기능 자체가 없거나 차단된 것 → 비교 의미 없어 skip
+                if method in _READ_METHODS and privileged_headers is not None:
+                    pre_resp = requests.request(
+                        method=method,
+                        url=url,
+                        headers={**(req.headers or {}), **privileged_headers},
+                        params=req.query or None,
+                        json=req.body,
+                        timeout=timeout_s,
+                    )
+                    if not (200 <= pre_resp.status_code < 300):
+                        continue
+
+                # auth[0](저권한/공격자) 실행
                 resp = requests.request(
-                    method=req.method,
+                    method=method,
                     url=url,
-                    headers={**(req.headers or {}), **auth_headers},
+                    headers={**(req.headers or {}), **attacker_headers},
                     params=req.query or None,
                     json=req.body,
                     timeout=timeout_s,
                 )
                 request_count += 1
 
-                # 6) 접근 성공 시 취약으로 간주
-                if resp.status_code in (200, 201, 204):
+                # 6) 저권한이 2xx(201 Created, 204 No Content 포함)를 받으면 BFLA
+                if 200 <= resp.status_code < 300:
                     role_val = getattr(attacker, "role", "")
                     evidence = Evidence(
                         request={
-                            "method": req.method,
+                            "method": method,
                             "url": url,
                             "headers": mask_sensitive(dict(resp.request.headers)),
                             "role": role_val,
