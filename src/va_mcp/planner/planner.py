@@ -46,7 +46,7 @@ class ScenarioPlanner:
     도구별 선정 기준 (planner_tool_selection.md 기준):
 
       A01 Broken Access Control:
-        idor_bola        : requires_auth AND has_resource_identifier AND auth_contexts >= 2
+        idor_bola        : has_resource_identifier AND auth_contexts >= 2  (requires_auth 무관 — P-8 fix)
         bfla             : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
         rbac_check       : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
         forced_browsing  : requires_auth (항상)
@@ -141,13 +141,13 @@ class ScenarioPlanner:
         if (has_admin or has_role_res) and auth_count >= 2:
             a01_tools.append("rbac_check")
 
-        if requires_auth:
-            # idor_bola: 리소스 식별자 + auth_contexts >= 2
-            if (has_resource or resource_ctx) and auth_count >= 2:
-                a01_tools.append("idor_bola")
-            elif has_resource or resource_ctx:
-                missing.append("auth_contexts")
+        # idor_bola: requires_auth 무관 — 공개 API도 IDOR 대상 (P-8 fix)
+        if (has_resource or resource_ctx) and auth_count >= 2:
+            a01_tools.append("idor_bola")
+        elif (has_resource or resource_ctx) and requires_auth:
+            missing.append("auth_contexts")  # 인증 필요 엔드포인트에서만 missing 안내
 
+        if requires_auth:
             # forced_browsing, cors_check: 항상
             a01_tools.append("forced_browsing")
             a01_tools.append("cors_check")
