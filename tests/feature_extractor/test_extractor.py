@@ -286,6 +286,24 @@ def test_super_admin_is_admin_feature(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
+# F-1: login path에서 "log" substring 오탐 방지
+# ------------------------------------------------------------------ #
+
+def test_login_not_logging_feature(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="POST",
+        path="/api/auth/login",
+        body={"username": "user1", "password": "secret"},
+        description="사용자 로그인",
+    )
+    result = extractor.extract(profile)
+
+    # "login" → sub-words {auth, login} → "log" 없음 → 오탐 방지
+    assert result.has_logging_feature is False
+
+
+# ------------------------------------------------------------------ #
 # 12. 최소 엔드포인트 — 모든 플래그 False
 # ------------------------------------------------------------------ #
 

@@ -38,7 +38,7 @@ _LOGIN_KEYWORDS: frozenset[str] = frozenset({
 
 # 로깅 기능 판단 키워드 (path/description 대상)
 _LOGGING_KEYWORDS: frozenset[str] = frozenset({
-    "log", "logs", "audit", "event", "events", "history",
+    "log", "logs", "logging", "audit", "event", "events", "history",
 })
 
 # 의존성 노출 단서 키워드 (path 대상) — build-info, version, dependency
@@ -219,10 +219,12 @@ class FeatureExtractor:
 
     def _has_logging_feature(self, profile: EndpointProfile) -> bool:
         """path 또는 description에 log/audit 관련 키워드가 포함되어 있는지 확인."""
-        path_lower = profile.path.lower()
+        # sub-word 매칭: audit-log → {audit, log} → "log" 탐지
+        # substring 미적용: login → path_sub_words에서 "login" ≠ "log" → 오탐 방지
+        path_sub_words = self._path_sub_words(profile.path)
         desc_lower = profile.description.lower()
         return (
-            any(kw in path_lower for kw in _LOGGING_KEYWORDS)
+            bool(path_sub_words & _LOGGING_KEYWORDS)
             or any(kw in desc_lower for kw in _LOGGING_KEYWORDS)
         )
 
