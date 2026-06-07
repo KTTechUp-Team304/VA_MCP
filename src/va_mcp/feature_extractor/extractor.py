@@ -135,6 +135,11 @@ class FeatureExtractor:
         if re.search(r"\{[^}]+\}", profile.path):
             return True
 
+        # 리터럴 숫자 경로 세그먼트 탐지 — /api/users/36 등 치환된 경로 입력 (F-7 fix)
+        for segment in profile.path.split('/'):
+            if segment and segment.isdigit():
+                return True
+
         # 4가지 패턴만 허용 — endswith("id") 단독 사용 시 is_valid 등 오탐 발생
         for data in (profile.body, profile.query, profile.params):
             if not data:

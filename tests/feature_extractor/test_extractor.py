@@ -322,6 +322,24 @@ def test_login_not_logging_feature(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
+# F-7: 리터럴 숫자 경로 세그먼트 탐지
+# ------------------------------------------------------------------ #
+
+def test_literal_numeric_segment_is_resource_identifier(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="GET",
+        path="/api/users/36",
+        auth_required=True,
+        description="특정 사용자 조회",
+    )
+    result = extractor.extract(profile)
+
+    # {param} 없이 숫자 세그먼트 "36"만 존재해도 has_resource_identifier=True
+    assert result.has_resource_identifier is True
+
+
+# ------------------------------------------------------------------ #
 # 12. 최소 엔드포인트 — 모든 플래그 False
 # ------------------------------------------------------------------ #
 
