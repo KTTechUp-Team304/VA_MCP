@@ -1,25 +1,26 @@
 """
 IDOR / BOLA (Insecure Direct Object Reference / Broken Object Level Authorization) 테스트 도구.
 
-소유자/공격자 역할:
-  request.path(또는 params)의 리소스 ID와 JWT payload(sub 등)를 비교해 결정한다.
-  - 소유자: JWT subject == path 리소스 ID
-  - 공격자: 그 외 auth 중 하나 (동률 시 역할 rank가 낮은 계정)
+access_type 기반 교차 접근 테스트:
+  resource_context.access_type == "private"일 때만 실행한다.
+  auth[0](소유자 역할)로 리소스 접근을 확인한 뒤,
+  auth[-1](타 사용자/공격자 역할)으로 동일 리소스에 접근 시도한다.
+  타 사용자도 2xx 응답을 받으면 IDOR로 판정한다.
 
-request.path 예: /api/users/2/profile  (리소스 ID 2)
+auth 구성:
+  auth[0]  = 소유자 역할 (낮은 권한 — resource를 소유한 첫 번째 계정)
+  auth[-1] = 공격자 역할 (마지막 계정 — 소유권 없이 접근 시도)
 
 SKIPPED 조건:
   - request 없음
   - auth 2개 미만
-  - path에서 교차 객체 리소스 ID 추출 불가 (/me 등)
-  - 리소스 ID와 매칭되는 소유자 JWT 없음
-  - 소유자 요청 실패(2xx 아님)
-  - 양쪽 응답 본문이 모두 비어 있음 ([], {} 등) — IDOR 입증 불가
+  - resource_context.access_type이 "private"이 아님 (공개 리소스)
+  - auth[0](소유자) 요청이 2xx 아님 (리소스 접근 불가)
+  - 양쪽 응답 본문이 모두 비어 있음 ([], {}) — IDOR 입증 불가
 """
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 from typing import Any
@@ -27,7 +28,6 @@ from typing import Any
 import requests
 
 from va_mcp.core import (
-    AuthContext,
     BaseTool,
     Confidence,
     ErrorCode,
@@ -49,8 +49,6 @@ from va_mcp.core.resolvers.auth_resolver import (
     CredentialResolverError,
 )
 
-_ROLE_RANK = {"guest": 0, "student": 1, "user": 1, "instructor": 2, "admin": 3}
-
 _PARAM_ID_KEYS = (
     "userId",
     "user_id",
@@ -63,10 +61,7 @@ _PARAM_ID_KEYS = (
 
 
 def extract_resource_id(path: str, params: dict[str, Any] | None) -> str | None:
-    """
-    path/params에서 교차 객체 테스트용 리소스 ID를 추출한다.
-    /me 등 컨텍스트 전용 경로는 None.
-    """
+    """path/params에서 리소스 ID를 추출한다 (evidence 기록용)."""
     if params:
         for key in _PARAM_ID_KEYS:
             if key in params and params[key] is not None:
@@ -91,26 +86,6 @@ def extract_resource_id(path: str, params: dict[str, Any] | None) -> str | None:
     return None
 
 
-def jwt_subject(token: str | None) -> str | None:
-    """Bearer JWT payload에서 사용자 ID(sub, userId, id)를 추출한다."""
-    if not token or token.count(".") < 2:
-        return None
-    segment = token.split(".")[1]
-    padding = 4 - (len(segment) % 4)
-    if padding != 4:
-        segment += "=" * padding
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(segment))
-    except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    for key in ("sub", "userId", "user_id", "id"):
-        if key in payload and payload[key] is not None:
-            return str(payload[key])
-    return None
-
-
 def is_vacuous_response_body(text: str) -> bool:
     """IDOR 비교에 쓸 수 없는 빈/무의미 성공 body."""
     stripped = text.strip()
@@ -125,50 +100,16 @@ def is_vacuous_response_body(text: str) -> bool:
     return parsed == [] or parsed == {}
 
 
-def resolve_idor_pair(
-    auth: list[AuthContext],
-    path: str,
-    params: dict[str, Any] | None,
-) -> tuple[AuthContext | None, AuthContext | None, str | None]:
-    """
-    (attacker, owner, skip_reason) 반환.
-    skip_reason이 있으면 attacker/owner는 None.
-    """
-    resource_id = extract_resource_id(path, params)
-    if resource_id is None:
-        return (
-            None,
-            None,
-            "path에서 교차 객체 리소스 ID를 추출할 수 없습니다 (/me 등).",
-        )
-
-    owners: list[AuthContext] = []
-    others: list[AuthContext] = []
-    for ctx in auth:
-        sub = jwt_subject(ctx.token)
-        if sub is not None and sub == resource_id:
-            owners.append(ctx)
-        else:
-            others.append(ctx)
-
-    if len(owners) != 1:
-        return (
-            None,
-            None,
-            f"리소스 ID({resource_id})와 일치하는 소유자 JWT(sub)를 찾을 수 없습니다.",
-        )
-    if not others:
-        return None, None, "비소유자(공격자) auth가 없습니다."
-
-    owner = owners[0]
-    attacker = min(others, key=lambda a: _ROLE_RANK.get(getattr(a, "role", ""), 0))
-    return attacker, owner, None
-
-
 class IdorBolaTool(BaseTool):
+    """
+    IDOR/BOLA 취약점 탐지 도구.
+    resource_context.access_type='private' 힌트 기반 교차 접근 테스트로
+    비소유자(타 사용자)의 무단 접근 가능 여부를 확인한다.
+    """
+
     tool_id = "idor_bola"
     tool_name = "IDOR / BOLA Testing"
-    tool_version = "0.2.0"
+    tool_version = "0.3.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         started_at = utc_now_iso()
@@ -176,9 +117,17 @@ class IdorBolaTool(BaseTool):
         if not tool_input.request:
             return self._skipped(started_at, "request가 제공되지 않았습니다.")
         if len(tool_input.auth) < 2:
+            return self._skipped(started_at, "auth가 2개 이상 필요합니다.")
+
+        # resource_context에서 access_type 확인 — "private"이 아니면 공개 리소스로 간주하여 SKIPPED
+        extra = (tool_input.options.extra or {}) if tool_input.options else {}
+        resource_context = extra.get("resource_context") or {}
+        access_type = resource_context.get("access_type")
+        if access_type != "private":
             return self._skipped(
                 started_at,
-                "auth가 2개 이상 필요합니다.",
+                "resource_context.access_type이 'private'이 아닙니다. "
+                "공개 리소스는 IDOR 테스트를 건너뜁니다.",
             )
 
         req = tool_input.request
@@ -190,24 +139,16 @@ class IdorBolaTool(BaseTool):
             else 5
         )
 
-        attacker, owner, skip_reason = resolve_idor_pair(
-            tool_input.auth,
-            req.path,
-            req.params or None,
-        )
-        if skip_reason:
-            return self._skipped(started_at, skip_reason)
+        # auth[0] = 소유자(첫 번째 계정), auth[-1] = 공격자(마지막 계정)
+        owner = tool_input.auth[0]
+        attacker = tool_input.auth[-1]
 
-        assert attacker is not None and owner is not None
-
+        # 소유자 접근 확인 — 2xx 아니면 리소스가 없거나 소유자 토큰 문제
         try:
             parse_credentials(owner)
             owner_headers = resolve_auth_headers(owner)
         except CredentialResolverError as e:
-            return self._skipped(
-                started_at,
-                f"Credential 해석 실패 (owner): {e}",
-            )
+            return self._skipped(started_at, f"Credential 해석 실패 (owner): {e}")
 
         try:
             owner_resp = requests.request(
@@ -226,26 +167,21 @@ class IdorBolaTool(BaseTool):
                 retryable=True,
             )
         except requests.RequestException as exc:
-            return self._error(
-                started_at,
-                ErrorCode.HTTP_FAILURE,
-                str(exc),
-            )
+            return self._error(started_at, ErrorCode.HTTP_FAILURE, str(exc))
 
-        if owner_resp.status_code not in (200, 201, 204):
+        if not (200 <= owner_resp.status_code < 300):
             return self._skipped(
                 started_at,
-                f"소유자({owner.role}) 요청도 실패({owner_resp.status_code}). 경로 또는 소유자 토큰을 확인하세요.",
+                f"소유자({owner.role}) 요청 실패({owner_resp.status_code}). "
+                "경로 또는 소유자 토큰을 확인하세요.",
             )
 
+        # 공격자 접근 시도 — 동일 리소스에 타 계정으로 접근
         try:
             parse_credentials(attacker)
             attacker_headers = resolve_auth_headers(attacker)
         except CredentialResolverError as e:
-            return self._skipped(
-                started_at,
-                f"Credential 해석 실패 (attacker): {e}",
-            )
+            return self._skipped(started_at, f"Credential 해석 실패 (attacker): {e}")
 
         try:
             attacker_resp = requests.request(
@@ -264,15 +200,11 @@ class IdorBolaTool(BaseTool):
                 retryable=True,
             )
         except requests.RequestException as exc:
-            return self._error(
-                started_at,
-                ErrorCode.HTTP_FAILURE,
-                str(exc),
-            )
+            return self._error(started_at, ErrorCode.HTTP_FAILURE, str(exc))
 
         ended_at = utc_now_iso()
 
-        if attacker_resp.status_code in (200, 201, 204):
+        if 200 <= attacker_resp.status_code < 300:
             if is_vacuous_response_body(owner_resp.text) and is_vacuous_response_body(
                 attacker_resp.text
             ):
@@ -281,12 +213,8 @@ class IdorBolaTool(BaseTool):
                     "양쪽 응답이 빈 본문([], {})이라 타 사용자 리소스 교차 접근 여부를 판단할 수 없습니다.",
                 )
 
-            bodies_match = (
-                attacker_resp.text.strip() == owner_resp.text.strip()
-            )
-            confidence_level = (
-                Confidence.HIGH if bodies_match else Confidence.MEDIUM
-            )
+            bodies_match = attacker_resp.text.strip() == owner_resp.text.strip()
+            confidence_level = Confidence.HIGH if bodies_match else Confidence.MEDIUM
 
             evidence = Evidence(
                 request={
