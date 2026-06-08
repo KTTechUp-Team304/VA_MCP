@@ -240,6 +240,106 @@ def test_state_changing_by_delete_method(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
+# F-4: last-login 세그먼트 오탐 방지
+# ------------------------------------------------------------------ #
+
+def test_last_login_not_login_endpoint(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="GET",
+        path="/api/users/last-login",
+        description="마지막 로그인 시각 조회",
+    )
+    result = extractor.extract(profile)
+
+    assert result.is_login_endpoint is False
+
+
+# ------------------------------------------------------------------ #
+# F-6: administrator 오탐 방지 + super-admin 정탐 확인
+# ------------------------------------------------------------------ #
+
+def test_administrator_not_admin_feature(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="GET",
+        path="/api/users/administrator",
+        description="관리자 계정 조회",
+    )
+    result = extractor.extract(profile)
+
+    # "administrator" ≠ sub-word "admin" → 오탐 방지
+    assert result.has_admin_feature is False
+
+
+def test_super_admin_is_admin_feature(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="GET",
+        path="/api/super-admin/settings",
+        description="슈퍼 관리자 설정",
+    )
+    result = extractor.extract(profile)
+
+    # "super-admin" → sub-words {super, admin} → "admin" 탐지
+    assert result.has_admin_feature is True
+
+
+# ------------------------------------------------------------------ #
+# F-5: is_valid 키 오탐 방지
+# ------------------------------------------------------------------ #
+
+def test_is_valid_not_resource_identifier(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="POST",
+        path="/api/orders/validate",
+        body={"is_valid": True, "amount": 100},
+        description="주문 유효성 검사",
+    )
+    result = extractor.extract(profile)
+
+    # "is_valid".endswith("id") → True 오탐 방지 — 4패턴 매칭으로 False
+    assert result.has_resource_identifier is False
+
+
+# ------------------------------------------------------------------ #
+# F-1: login path에서 "log" substring 오탐 방지
+# ------------------------------------------------------------------ #
+
+def test_login_not_logging_feature(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="POST",
+        path="/api/auth/login",
+        body={"username": "user1", "password": "secret"},
+        description="사용자 로그인",
+    )
+    result = extractor.extract(profile)
+
+    # "login" → sub-words {auth, login} → "log" 없음 → 오탐 방지
+    assert result.has_logging_feature is False
+
+
+# ------------------------------------------------------------------ #
+# F-7: 리터럴 숫자 경로 세그먼트 탐지
+# ------------------------------------------------------------------ #
+
+def test_literal_numeric_segment_is_resource_identifier(extractor: FeatureExtractor) -> None:
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="GET",
+        path="/api/users/36",
+        auth_required=True,
+        description="특정 사용자 조회",
+    )
+    result = extractor.extract(profile)
+
+    # {param} 없이 숫자 세그먼트 "36"만 존재해도 has_resource_identifier=True
+    assert result.has_resource_identifier is True
+
+
+# ------------------------------------------------------------------ #
 # 12. 최소 엔드포인트 — 모든 플래그 False
 # ------------------------------------------------------------------ #
 
