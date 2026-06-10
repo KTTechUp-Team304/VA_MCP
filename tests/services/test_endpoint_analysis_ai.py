@@ -121,6 +121,7 @@ def test_ai_review_included_in_result(monkeypatch):
             missed_findings=[
                 MissedFinding(
                     tool_id="sql_injection",
+                    status="PASSED",
                     reason="Boolean 기반 탐지 누락",
                     recommendation="AND 1=1 vs AND 1=2 응답 차이 확인 필요",
                 )
@@ -159,6 +160,7 @@ def test_ai_only_findings(monkeypatch):
             missed_findings=[
                 MissedFinding(
                     tool_id="extra_tool",
+                    status="SKIPPED",
                     reason="탐지 누락",
                     recommendation="재실행 필요",
                 )

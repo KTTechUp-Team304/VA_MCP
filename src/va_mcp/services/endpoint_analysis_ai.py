@@ -69,6 +69,7 @@ def analyze_endpoint_with_ai(raw_input: dict[str, Any]) -> dict[str, Any]:
             "missed_findings": [
                 {
                     "tool_id": f.tool_id,
+                    "status": f.status,
                     "reason": f.reason,
                     "recommendation": f.recommendation,
                 }
