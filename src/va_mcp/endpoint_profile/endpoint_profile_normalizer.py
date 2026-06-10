@@ -164,6 +164,7 @@ def normalize_resource_context(
 
     owner = _get_str("owner_id_key", "ownerIdKey")
     tenant = _get_str("tenant_id_key", "tenantIdKey")
+    access_type = _get_str("access_type", "accessType")  # O-6: idor_bola T-21 fix에서 사용
     hier_raw = raw.get("hierarchy_keys", raw.get("hierarchyKeys", []))
     if hier_raw is None:
         hierarchy: list[str] = []
@@ -188,6 +189,7 @@ def normalize_resource_context(
         "owner_id_key": owner,
         "tenant_id_key": tenant,
         "hierarchy_keys": hierarchy,
+        "access_type": access_type,  # O-6: None 포함하여 항상 키 존재
     }
     extra_keys = set(raw.keys()) - {
         "resource_type",
@@ -200,6 +202,8 @@ def normalize_resource_context(
         "tenantIdKey",
         "hierarchy_keys",
         "hierarchyKeys",
+        "access_type",
+        "accessType",
     }
     for k in sorted(extra_keys):
         logger.debug("resource_context에서 인식하지 않는 키 무시: %s", k)

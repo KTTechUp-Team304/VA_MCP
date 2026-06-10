@@ -38,7 +38,7 @@ _LOGIN_KEYWORDS: frozenset[str] = frozenset({
 
 # 로깅 기능 판단 키워드 (path/description 대상)
 _LOGGING_KEYWORDS: frozenset[str] = frozenset({
-    "log", "logs", "audit", "event", "events", "history",
+    "log", "logs", "logging", "audit", "event", "events", "history",
 })
 
 # 의존성 노출 단서 키워드 (path 대상) — build-info, version, dependency
@@ -135,14 +135,23 @@ class FeatureExtractor:
         if re.search(r"\{[^}]+\}", profile.path):
             return True
 
-        # camelCase(userId→userid)와 스네이크케이스(user_id) 모두 처리하기 위해
-        # endswith("id")와 endswith("_id")를 함께 사용한다
+        # 리터럴 숫자 경로 세그먼트 탐지 — /api/users/36 등 치환된 경로 입력 (F-7 fix)
+        for segment in profile.path.split('/'):
+            if segment and segment.isdigit():
+                return True
+
+        # 4가지 패턴만 허용 — endswith("id") 단독 사용 시 is_valid 등 오탐 발생
         for data in (profile.body, profile.query, profile.params):
             if not data:
                 continue
             for key in data:
                 key_lower = key.lower()
-                if key_lower.endswith("_id") or key_lower.endswith("id"):
+                if (
+                    key_lower == "id"                       # 단독 "id" 키
+                    or key_lower.endswith("_id")            # snake_case: user_id, order_id
+                    or bool(re.search(r"[a-z]Id$", key))   # camelCase: userId, orderId
+                    or bool(re.search(r"[a-z]ID$", key))   # 대문자ID: userID, orderID
+                ):
                     return True
 
         return False
@@ -183,10 +192,11 @@ class FeatureExtractor:
         path 또는 description에 login 관련 키워드가 포함되어 있는지 확인한다.
         path 기반 판단은 보조 신호이며, description 키워드 매칭과 함께 사용한다.
         """
-        path_lower = profile.path.lower()
+        # 세그먼트 정확 매칭 — sub-word 미적용: last-login → {last, login}이 되면 오탐 재발
+        path_parts = {p for p in profile.path.lower().split("/") if p}
         desc_lower = profile.description.lower()
         return (
-            any(kw in path_lower for kw in _LOGIN_KEYWORDS)
+            bool(path_parts & _LOGIN_KEYWORDS)
             or any(kw in desc_lower for kw in _LOGIN_KEYWORDS)
         )
 
@@ -205,19 +215,25 @@ class FeatureExtractor:
     # ------------------------------------------------------------------ #
 
     def _has_admin_feature(self, profile: EndpointProfile) -> bool:
-        """path에 'admin' 키워드가 포함되어 있는지 확인. (보조 신호 — path 기반)"""
-        return "admin" in profile.path.lower()
+        """path에 'admin' sub-word가 존재하는지 확인. (보조 신호 — path 기반)"""
+        # sub-word 매칭: super-admin, admin-panel 등 하이픈 결합도 탐지
+        # substring 미적용: administrator → {administrator} ≠ "admin" → 오탐 방지
+        return "admin" in self._path_sub_words(profile.path)
 
     def _has_debug_feature(self, profile: EndpointProfile) -> bool:
-        """path에 'debug' 키워드가 포함되어 있는지 확인. (보조 신호 — path 기반)"""
-        return "debug" in profile.path.lower()
+        """path에 'debug' sub-word가 존재하는지 확인. (보조 신호 — path 기반)"""
+        # sub-word 매칭: debug-mode 등 하이픈 결합도 탐지
+        # substring 미적용: debugger → {debugger} ≠ "debug" → 오탐 방지
+        return "debug" in self._path_sub_words(profile.path)
 
     def _has_logging_feature(self, profile: EndpointProfile) -> bool:
         """path 또는 description에 log/audit 관련 키워드가 포함되어 있는지 확인."""
-        path_lower = profile.path.lower()
+        # sub-word 매칭: audit-log → {audit, log} → "log" 탐지
+        # substring 미적용: login → path_sub_words에서 "login" ≠ "log" → 오탐 방지
+        path_sub_words = self._path_sub_words(profile.path)
         desc_lower = profile.description.lower()
         return (
-            any(kw in path_lower for kw in _LOGGING_KEYWORDS)
+            bool(path_sub_words & _LOGGING_KEYWORDS)
             or any(kw in desc_lower for kw in _LOGGING_KEYWORDS)
         )
 
@@ -257,3 +273,18 @@ class FeatureExtractor:
             return False
         # 소문자 변환 후 집합 교차 연산으로 O(n) 탐색
         return bool({k.lower() for k in data} & keywords)
+
+    @staticmethod
+    def _path_sub_words(path: str) -> frozenset[str]:
+        """URL을 /, -, _ 기준으로 분리해 하위 단어(sub-word) 집합을 반환한다.
+
+        예) /api/super-admin → {api, super, admin}
+            /api/audit-log  → {api, audit, log}
+        로그인 오탐 방지 목적으로 _is_login_endpoint에는 사용하지 않는다.
+        """
+        words: set[str] = set()
+        for seg in path.lower().split("/"):
+            for part in re.split(r"[-_]", seg):
+                if part:
+                    words.add(part)
+        return frozenset(words)

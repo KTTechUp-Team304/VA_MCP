@@ -142,3 +142,49 @@ def test_skipped_no_auth():
 
     assert result.status == "skipped"
     assert result.evidence == []
+
+
+# ------------------------------------------------------------------
+# T-5 fix: auth[-1] 사전 검증 + 2xx 범위 + 메서드별 분기
+# ------------------------------------------------------------------
+
+def test_vulnerable_201():
+    """저권한 응답이 201이어도 VULNERABLE로 판정한다 (2xx 범위 전체 포함)."""
+    with patch("requests.request", return_value=mock_response(201, '{"created": true}')):
+        result = BflaTool().run(make_tool_input())
+
+    assert result.status == "vulnerable"
+    assert len(result.evidence) == 1
+
+
+def test_get_privileged_blocked_skips_path():
+    """GET + 2 auths에서 auth[-1] 사전 검증이 4xx이면 해당 경로를 건너뛰고 PASSED를 반환한다."""
+    two_auths = [
+        AuthContext(role="user", auth_type="bearer", token="USER_TOKEN"),
+        AuthContext(role="admin", auth_type="bearer", token="ADMIN_TOKEN"),
+    ]
+    with patch("requests.request", side_effect=[mock_response(403)]) as mock_req:
+        result = BflaTool().run(make_tool_input(auth=two_auths))
+
+    assert result.status == "passed"
+    # auth[-1] 사전 검증 1회만 호출 (auth[0] 요청은 발생하지 않음)
+    assert mock_req.call_count == 1
+
+
+def test_post_skips_privileged_pre_validation():
+    """POST 메서드에서는 auth[-1] 사전 검증 없이 auth[0] 요청만 1회 실행한다."""
+    two_auths = [
+        AuthContext(role="user", auth_type="bearer", token="USER_TOKEN"),
+        AuthContext(role="admin", auth_type="bearer", token="ADMIN_TOKEN"),
+    ]
+    with patch("requests.request", side_effect=[mock_response(201)]) as mock_req:
+        result = BflaTool().run(
+            make_tool_input(
+                auth=two_auths,
+                request=ApiRequest(method="POST", path="/api/admin/audit-logs/clear"),
+            )
+        )
+
+    assert result.status == "vulnerable"
+    # auth[0] 단독 1회 호출만 발생 (auth[-1] 사전 검증 없음)
+    assert mock_req.call_count == 1

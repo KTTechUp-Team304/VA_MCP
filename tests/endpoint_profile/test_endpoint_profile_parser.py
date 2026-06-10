@@ -84,6 +84,7 @@ def test_camel_case_aliases():
         "owner_id_key": None,
         "tenant_id_key": None,
         "hierarchy_keys": [],
+        "access_type": None,
     }
 
 

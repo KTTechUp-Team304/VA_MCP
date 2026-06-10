@@ -78,6 +78,12 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
     if not cred_fields and ep.auth and ep.auth.login and ep.auth.login.credential_fields:
         cred_fields = ep.auth.login.credential_fields
 
+    extra: dict = {}
+    if cred_fields:
+        extra["field_mapping"] = {"credential_fields": cred_fields}
+    if ep.resource_context:
+        extra["resource_context"] = ep.resource_context
+
     return ToolInput(
         target=TargetInfo(
             base_url=ep.base_url,
@@ -95,11 +101,7 @@ def build_tool_input(ep: EndpointProfile) -> ToolInput:
             timeout=5000,
             safe_mode=False,
             max_requests=20,
-            extra={
-                "field_mapping": {
-                    "credential_fields": cred_fields
-                } if cred_fields else {}
-            },
+            extra=extra,
         ),
     )
 
