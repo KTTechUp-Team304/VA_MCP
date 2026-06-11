@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from va_mcp.core.constants import (
@@ -143,6 +144,51 @@ class Orchestrator:
             profile.auth_contexts = merged
         return provider
 
+    def _run_single_tool(
+        self,
+        tid: str,
+        tool_input: ToolInput,
+        cred_tool_input: ToolInput | None,
+        start_ts: float,
+        started_at: str,
+    ) -> ToolResult | None:
+        """단일 툴을 실행하고 결과를 반환한다. ThreadPoolExecutor에서 호출된다."""
+        tool = self.tools.get(tid)
+        if not tool:
+            return None
+
+        try:
+            active_input = (
+                cred_tool_input
+                if tid in _CREDENTIAL_TOOLS and cred_tool_input
+                else tool_input
+            )
+            return tool.run(active_input)
+        except Exception as exc:
+            ended_at = utc_now_iso()
+            duration_ms = int((time.time() - start_ts) * 1000)
+            return ToolResult(
+                tool_id=tid,
+                tool_name=getattr(tool, "tool_name", tid),
+                status=ToolStatus.ERROR.value,
+                severity=Severity.INFO.value,
+                confidence=Confidence.LOW.value,
+                title="툴 실행 오류",
+                description=str(exc),
+                evidence=[],
+                errors=[
+                    build_tool_error(
+                        ErrorCode.INTERNAL_ERROR.value,
+                        str(exc),
+                        retryable=False,
+                    )
+                ],
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                tool_version=getattr(tool, "tool_version", "0.1.0"),
+            )
+
     def run(
         self,
         tool_ids: list[str],
@@ -152,7 +198,10 @@ class Orchestrator:
         logout_when_done: bool = True,
     ) -> list[ToolResult]:
         """
-        tool_ids에 해당하는 등록 tool을 순차 실행한다.
+        tool_ids에 해당하는 등록 tool을 실행한다.
+
+        - 일반 툴: ThreadPoolExecutor로 병렬 실행 (성능 최적화)
+        - _CREDENTIAL_TOOLS: 순차 실행 (서로 간섭 방지)
 
         ScenarioRunner가 OWASP 카테고리별로 호출한다.
         provider를 넘기면 인증 컨텍스트 병합·로그아웃을 호출자가 제어할 수 있다.
@@ -178,45 +227,38 @@ class Orchestrator:
         started_at = utc_now_iso()
         results: list[ToolResult] = []
 
+        # 툴을 병렬 실행 대상과 순차 실행 대상으로 분리
+        parallel_ids = [tid for tid in tool_ids if tid not in _CREDENTIAL_TOOLS]
+        sequential_ids = [tid for tid in tool_ids if tid in _CREDENTIAL_TOOLS]
+
         try:
-            for tid in tool_ids:
-                tool = self.tools.get(tid)
-                if not tool:
-                    continue
+            # 일반 툴: 병렬 실행 (max_workers=8로 백서버 부하 조절)
+            if parallel_ids:
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    futures = {
+                        executor.submit(
+                            self._run_single_tool,
+                            tid,
+                            tool_input,
+                            cred_tool_input,
+                            start_ts,
+                            started_at,
+                        ): tid
+                        for tid in parallel_ids
+                    }
+                    for future in as_completed(futures):
+                        result = future.result()
+                        if result is not None:
+                            results.append(result)
 
-                try:
-                    active_input = (
-                        cred_tool_input
-                        if tid in _CREDENTIAL_TOOLS and cred_tool_input
-                        else tool_input
-                    )
-                    result: ToolResult = tool.run(active_input)
-                except Exception as exc:
-                    ended_at = utc_now_iso()
-                    duration_ms = int((time.time() - start_ts) * 1000)
-                    result = ToolResult(
-                        tool_id=tid,
-                        tool_name=getattr(tool, "tool_name", tid),
-                        status=ToolStatus.ERROR.value,
-                        severity=Severity.INFO.value,
-                        confidence=Confidence.LOW.value,
-                        title="툴 실행 오류",
-                        description=str(exc),
-                        evidence=[],
-                        errors=[
-                            build_tool_error(
-                                ErrorCode.INTERNAL_ERROR.value,
-                                str(exc),
-                                retryable=False,
-                            )
-                        ],
-                        started_at=started_at,
-                        ended_at=ended_at,
-                        duration_ms=duration_ms,
-                        tool_version=getattr(tool, "tool_version", "0.1.0"),
-                    )
+            # 크리덴셜 툴: 순차 실행 (간섭 방지)
+            for tid in sequential_ids:
+                result = self._run_single_tool(
+                    tid, tool_input, cred_tool_input, start_ts, started_at
+                )
+                if result is not None:
+                    results.append(result)
 
-                results.append(result)
         finally:
             if logout_when_done and own_provider is not None and provider is None:
                 own_provider.logout_all()

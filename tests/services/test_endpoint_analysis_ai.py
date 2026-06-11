@@ -1,5 +1,5 @@
 """
-analyze_endpoint_with_ai 테스트.
+analyze_endpoint_with_ai 단위 테스트 (모든 외부 의존성 mock).
 
 [정상 실행 - mock AI]
 test_analyzed_without_ai           - AI mock → 빈 missed_findings, status=analyzed
@@ -24,6 +24,7 @@ from va_mcp.core.endpoint_report import EndpointReport
 from va_mcp.core.scenario_result import ScenarioResult
 from va_mcp.core.schemas import ToolResult
 from va_mcp.endpoint_profile.endpoint_profile import EndpointProfile
+from va_mcp.planner.ai_advisor import ReviewResult
 from va_mcp.services.endpoint_analysis_ai import analyze_endpoint_with_ai
 
 
@@ -77,7 +78,7 @@ def make_mock_recorder() -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def patch_infra(monkeypatch):
-    """RunRecorder, ScenarioRunner, write_vulnerability_report, discover_tools mock."""
+    """RunRecorder, ScenarioRunner, ai_advisor, write_vulnerability_report, discover_tools mock."""
     monkeypatch.setattr(
         "va_mcp.services.endpoint_analysis_ai.RunRecorder",
         lambda: make_mock_recorder(),
@@ -85,6 +86,10 @@ def patch_infra(monkeypatch):
     monkeypatch.setattr(
         "va_mcp.services.endpoint_analysis_ai._scenario_runner.run",
         lambda planner_output, profile: make_endpoint_report(profile),
+    )
+    monkeypatch.setattr(
+        "va_mcp.services.endpoint_analysis_ai.ai_advisor.review",
+        lambda report, profile, valid_tool_ids: ReviewResult(missed_findings=[]),
     )
     monkeypatch.setattr(
         "va_mcp.services.endpoint_analysis_ai.write_vulnerability_report",
