@@ -35,3 +35,6 @@ dev = [
 log_cli = true
 log_cli_level = "DEBUG"
 log_cli_format = "%(levelname)s %(name)s: %(message)s"
+markers = [
+    "integration: 실제 외부 API를 호출하는 통합 테스트. pytest -m integration 으로 실행",
+]
