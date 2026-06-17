@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# 설치 경로와 무관하게 pyproject.toml이 있는 디렉토리를 프로젝트 루트로 찾는다.
+# (개발 시: src/va_mcp/ 위 2단계 / uv tool install 시: 설치 경로와 다를 수 있음)
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parents[2]
