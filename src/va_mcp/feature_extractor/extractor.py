@@ -242,9 +242,13 @@ class FeatureExtractor:
     # ------------------------------------------------------------------ #
 
     def _has_dependency_exposure(self, profile: EndpointProfile) -> bool:
-        """path에 build-info/version/dependency 등 의존성 노출 단서 키워드가 포함되어 있는지 확인."""
+        """path 키워드 또는 resource_context에 의존성 목록이 존재하는지 확인."""
         path_lower = profile.path.lower()
-        return any(kw in path_lower for kw in _DEPENDENCY_KEYWORDS)
+        path_hit = any(kw in path_lower for kw in _DEPENDENCY_KEYWORDS)
+        # PM 설계(path=/, resource_context.dependencies)에서 path 키워드가 없으므로 rc도 함께 검사
+        rc = profile.resource_context or {}
+        rc_hit = "dependencies" in rc
+        return path_hit or rc_hit
 
     def _has_secret_handling(self, profile: EndpointProfile) -> bool:
         """path 또는 body 키에 token/secret/api-key 등 비밀정보 처리 단서가 있는지 확인."""
