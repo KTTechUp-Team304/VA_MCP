@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from packaging.specifiers import SpecifierSet
+from packaging.version import InvalidVersion, Version
 
 from va_mcp.core.base import BaseTool
 from va_mcp.core.constants import Confidence, ErrorCode, Severity, ToolStatus
@@ -73,8 +74,9 @@ class DependencyCheck(BaseTool):
                 pkg_lower = package.lower()
                 if pkg_lower not in vuln_db:
                     continue
-                # SpecifierSet.contains()는 version_str이 올바른 semver 형식이어야 함
-                # 잘못된 형식이면 InvalidVersion 발생 → outer except → ERROR 분기
+                # SpecifierSet.contains()는 일부 버전에서 잘못된 형식을 False로 무시함
+                # Version()으로 먼저 명시적 검증 — InvalidVersion → outer except → ERROR 분기
+                Version(version_str)
                 for constraint, description, sev_str, cve_id in vuln_db[pkg_lower]:
                     if SpecifierSet(constraint).contains(version_str):
                         findings.append(
