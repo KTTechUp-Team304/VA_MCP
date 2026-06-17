@@ -17,7 +17,7 @@ OWASP_TOOL_MAP: dict[str, list[str]] = {
         "cors_check",
     ],
     "A02": list(A02_BASELINE_TOOL_IDS),   # Security Misconfiguration
-    "A03": [],                             # Software Supply Chain Failures (미구현)
+    "A03": ["dependency_check"],            # Software Supply Chain Failures
     "A04": [  # Cryptographic Failures
         "insecure_jwt",
         "cookie_security",

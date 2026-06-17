@@ -167,7 +167,7 @@ class ScenarioPlanner:
         # ── A03: Software Supply Chain Failures ───────────────────────
         if _get(feature_set, "has_dependency_exposure"):
             candidates.append("A03")
-            # 미구현
+            tool_ids.append("dependency_check")
 
         # ── A04: Cryptographic Failures ───────────────────────────────
         has_secret      = _get(feature_set, "has_secret_handling")
