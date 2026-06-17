@@ -167,6 +167,19 @@ def test_version_info_endpoint(extractor: FeatureExtractor) -> None:
     assert result.has_user_input is False
 
 
+def test_dependency_exposure_via_resource_context(extractor: FeatureExtractor) -> None:
+    """path=/ 이지만 resource_context.dependencies 존재 → has_dependency_exposure=True."""
+    profile = EndpointProfile(
+        base_url="http://api.example.com",
+        method="GET",
+        path="/",
+        resource_context={"runtime": "node", "dependencies": {"lodash": "4.17.11"}},
+    )
+    result = extractor.extract(profile)
+
+    assert result.has_dependency_exposure is True
+
+
 # ------------------------------------------------------------------ #
 # 9. 민감 데이터 반환 엔드포인트
 # ------------------------------------------------------------------ #

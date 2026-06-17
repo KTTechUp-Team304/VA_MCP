@@ -209,10 +209,11 @@ def test_a01_missing_list_content(planner):
 # ------------------------------------------------------------------
 
 def test_a03_dependency_exposure(planner):
-    """has_dependency_exposure=True → A03 선정."""
+    """has_dependency_exposure=True → A03 선정 + dependency_check 도구 포함."""
     fs = FeatureSet(has_dependency_exposure=True)
     out = planner.plan(fs)
     assert "A03" in out.owasp_candidates
+    assert "dependency_check" in out.tool_ids
 
 
 # ------------------------------------------------------------------
