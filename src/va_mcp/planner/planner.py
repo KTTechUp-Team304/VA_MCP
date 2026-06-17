@@ -55,7 +55,7 @@ class ScenarioPlanner:
         cors_check       : requires_auth (항상)
 
       A02 Security Misconfiguration: baseline 항상
-      A03 Software Supply Chain:     has_dependency_exposure (미구현)
+      A03 Software Supply Chain:     has_dependency_exposure → dependency_check
 
       A04 Cryptographic Failures:
         insecure_jwt           : has_secret_handling AND (is_login_endpoint OR requires_auth)

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from packaging.specifiers import SpecifierSet
-from packaging.version import InvalidVersion, Version
+from packaging.version import Version
 
 from va_mcp.core.base import BaseTool
 from va_mcp.core.constants import Confidence, ErrorCode, Severity, ToolStatus
