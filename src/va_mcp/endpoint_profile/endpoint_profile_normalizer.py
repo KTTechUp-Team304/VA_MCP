@@ -143,6 +143,35 @@ def normalize_resource_context(
 
     rt = _get_str("resource_type", "resourceType")
     rid = _get_str("resource_id_key", "resourceIdKey")
+
+    # A03 : Software Supply Chain 모드 — resource_type/resource_id_key 없이
+    # runtime/dependencies만 오는 입력은 IDOR 분기와 별도로 처리
+    if rt is None and rid is None and "dependencies" in raw:
+        runtime = _get_str("runtime") or "unknown"
+        deps_raw = raw.get("dependencies")
+        if isinstance(deps_raw, Mapping):
+            deps = dict(deps_raw)
+        else:
+            msg = "dependencies는 객체(dict)여야 합니다"
+            if strict:
+                log_stage_io(
+                    logger,
+                    "normalize_resource_context.exit",
+                    input_data=None,
+                    output_data={"normalized": None, "warnings": warnings, "error": msg},
+                )
+                raise ValueError(msg)
+            warnings.append(msg)
+            deps = {}
+        normalized = {"runtime": runtime, "dependencies": deps}
+        log_stage_io(
+            logger,
+            "normalize_resource_context.exit",
+            input_data=None,
+            output_data={"normalized": normalized, "warnings": warnings},
+        )
+        return normalized, warnings
+
     if rt is None or rid is None:
         msg = "resource_context에 resource_type, resource_id_key가 필요합니다"
         if strict:
