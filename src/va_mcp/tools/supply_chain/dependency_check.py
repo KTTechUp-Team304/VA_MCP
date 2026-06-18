@@ -13,7 +13,7 @@ from va_mcp.core.utils import build_tool_error, utc_now_iso
 
 logger = logging.getLogger(__name__)
 
-# runtime 키로 분리 — 동일 패키지명이 npm/PyPI 양쪽에 존재하는 경우 혼동 방지 (Rule 32)
+# runtime 키로 분리 — 동일 패키지명이 npm/PyPI 양쪽에 존재하는 경우 혼동 방지
 # 새 생태계 추가 시 해당 runtime 키 아래 항목만 추가하면 로직 변경 불필요
 KNOWN_VULNERABLE: dict[str, dict[str, list[tuple[str, str, str, str]]]] = {
     "node": {
@@ -46,7 +46,7 @@ class DependencyCheck(BaseTool):
             rc = tool_input.options.extra.get("resource_context", {})
             deps = rc.get("dependencies")
 
-            # dependencies 키 자체가 없으면 검사 전제조건 미충족 → SKIPPED (Rule 27 허용)
+            # dependencies 키 자체가 없으면 검사 전제조건 미충족 → SKIPPED
             if deps is None:
                 ended_at = utc_now_iso()
                 return ToolResult(
