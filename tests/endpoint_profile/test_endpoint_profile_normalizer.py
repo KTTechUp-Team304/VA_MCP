@@ -58,7 +58,7 @@ def test_normalize_resource_context_strict_invalid():
 
 
 def test_normalize_resource_context_access_type_preserved():
-    """O-6: access_type 필드가 정규화 후에도 보존되어야 한다."""
+    """access_type 필드가 정규화 후에도 보존되어야 한다."""
     ctx, warns = normalize_resource_context(
         {
             "resource_type": "file",
@@ -72,7 +72,7 @@ def test_normalize_resource_context_access_type_preserved():
 
 
 def test_normalize_resource_context_access_type_camel():
-    """O-6: accessType(camelCase) 입력도 access_type으로 정규화된다."""
+    """accessType(camelCase) 입력도 access_type으로 정규화된다."""
     ctx, warns = normalize_resource_context(
         {
             "resource_type": "enrollment",
@@ -86,7 +86,7 @@ def test_normalize_resource_context_access_type_camel():
 
 
 def test_normalize_resource_context_a03_mode():
-    """O-7 fix: resource_type/resource_id_key 없이 runtime/dependencies만 와도 통과해야 한다."""
+    """resource_type/resource_id_key 없이 runtime/dependencies만 와도 통과해야 한다."""
     ctx, warns = normalize_resource_context(
         {"runtime": "node", "dependencies": {"lodash": "4.17.11"}},
         strict=True,
@@ -96,7 +96,7 @@ def test_normalize_resource_context_a03_mode():
 
 
 def test_normalize_resource_context_a03_mode_default_runtime():
-    """O-7 fix: runtime 없이 dependencies만 와도 'unknown'으로 채워져 통과한다."""
+    """runtime 없이 dependencies만 와도 'unknown'으로 채워져 통과한다."""
     ctx, warns = normalize_resource_context(
         {"dependencies": {"lodash": "4.17.11"}},
         strict=True,
@@ -106,7 +106,7 @@ def test_normalize_resource_context_a03_mode_default_runtime():
 
 
 def test_normalize_resource_context_a03_mode_invalid_dependencies_strict():
-    """O-7 fix: dependencies가 dict가 아니면 strict 모드에서 에러를 낸다."""
+    """dependencies가 dict가 아니면 strict 모드에서 에러를 낸다."""
     with pytest.raises(ValueError):
         normalize_resource_context(
             {"runtime": "node", "dependencies": "not-a-dict"},
@@ -115,7 +115,7 @@ def test_normalize_resource_context_a03_mode_invalid_dependencies_strict():
 
 
 def test_normalize_resource_context_a03_mode_invalid_dependencies_warns():
-    """O-7 fix: dependencies가 dict가 아니면 non-strict 모드에서는 경고 후 빈 dict로 처리한다."""
+    """dependencies가 dict가 아니면 non-strict 모드에서는 경고 후 빈 dict로 처리한다."""
     ctx, warns = normalize_resource_context(
         {"runtime": "node", "dependencies": "not-a-dict"},
         strict=False,
@@ -125,7 +125,7 @@ def test_normalize_resource_context_a03_mode_invalid_dependencies_warns():
 
 
 def test_normalize_resource_context_idor_unaffected_by_a03_mode():
-    """O-7 fix: resource_type이 있는 기존 IDOR 입력은 영향 없이 그대로 동작해야 한다."""
+    """resource_type이 있는 기존 IDOR 입력은 영향 없이 그대로 동작해야 한다."""
     ctx, warns = normalize_resource_context(
         {"resource_type": "u", "resource_id_key": "id"}, strict=True
     )

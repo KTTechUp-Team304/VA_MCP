@@ -39,7 +39,7 @@ def test_validation_issue_has_code_field_message():
 
 
 def test_validate_resource_context_idor_still_requires_fields():
-    """O-7 fix 회귀 확인: IDOR 입력은 여전히 resource_type/resource_id_key를 요구한다."""
+    """회귀 확인: IDOR 입력은 여전히 resource_type/resource_id_key를 요구한다."""
     p = EndpointProfile(
         base_url="https://x.com",
         method="GET",
@@ -52,7 +52,7 @@ def test_validate_resource_context_idor_still_requires_fields():
 
 
 def test_validate_resource_context_a03_mode_skips_idor_fields():
-    """O-7 fix: dependencies만 있는 A03 입력은 resource_type/resource_id_key 없이도 통과한다."""
+    """dependencies만 있는 A03 입력은 resource_type/resource_id_key 없이도 통과한다."""
     p = EndpointProfile(
         base_url="https://x.com",
         method="GET",

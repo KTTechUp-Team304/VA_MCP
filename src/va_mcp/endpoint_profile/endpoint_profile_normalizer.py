@@ -193,7 +193,7 @@ def normalize_resource_context(
 
     owner = _get_str("owner_id_key", "ownerIdKey")
     tenant = _get_str("tenant_id_key", "tenantIdKey")
-    access_type = _get_str("access_type", "accessType")  # O-6: idor_bola T-21 fix에서 사용
+    access_type = _get_str("access_type", "accessType")  # idor_bola의 교차 접근 테스트에서 사용
     hier_raw = raw.get("hierarchy_keys", raw.get("hierarchyKeys", []))
     if hier_raw is None:
         hierarchy: list[str] = []
@@ -218,7 +218,7 @@ def normalize_resource_context(
         "owner_id_key": owner,
         "tenant_id_key": tenant,
         "hierarchy_keys": hierarchy,
-        "access_type": access_type,  # O-6: None 포함하여 항상 키 존재
+        "access_type": access_type,  # None 포함하여 항상 키 존재
     }
     extra_keys = set(raw.keys()) - {
         "resource_type",

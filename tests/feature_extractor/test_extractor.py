@@ -253,7 +253,7 @@ def test_state_changing_by_delete_method(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
-# F-4: last-login 세그먼트 오탐 방지
+# last-login 세그먼트 오탐 방지
 # ------------------------------------------------------------------ #
 
 def test_last_login_not_login_endpoint(extractor: FeatureExtractor) -> None:
@@ -269,7 +269,7 @@ def test_last_login_not_login_endpoint(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
-# F-6: administrator 오탐 방지 + super-admin 정탐 확인
+# administrator 오탐 방지 + super-admin 정탐 확인
 # ------------------------------------------------------------------ #
 
 def test_administrator_not_admin_feature(extractor: FeatureExtractor) -> None:
@@ -299,7 +299,7 @@ def test_super_admin_is_admin_feature(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
-# F-5: is_valid 키 오탐 방지
+# is_valid 키 오탐 방지
 # ------------------------------------------------------------------ #
 
 def test_is_valid_not_resource_identifier(extractor: FeatureExtractor) -> None:
@@ -317,7 +317,7 @@ def test_is_valid_not_resource_identifier(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
-# F-1: login path에서 "log" substring 오탐 방지
+# login path에서 "log" substring 오탐 방지
 # ------------------------------------------------------------------ #
 
 def test_login_not_logging_feature(extractor: FeatureExtractor) -> None:
@@ -335,7 +335,7 @@ def test_login_not_logging_feature(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
-# F-7: 리터럴 숫자 경로 세그먼트 탐지
+# 리터럴 숫자 경로 세그먼트 탐지
 # ------------------------------------------------------------------ #
 
 def test_literal_numeric_segment_is_resource_identifier(extractor: FeatureExtractor) -> None:

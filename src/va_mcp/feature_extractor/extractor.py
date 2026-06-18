@@ -135,7 +135,7 @@ class FeatureExtractor:
         if re.search(r"\{[^}]+\}", profile.path):
             return True
 
-        # 리터럴 숫자 경로 세그먼트 탐지 — /api/users/36 등 치환된 경로 입력 (F-7 fix)
+        # 리터럴 숫자 경로 세그먼트 탐지 — /api/users/36 등 치환된 경로 입력
         for segment in profile.path.split('/'):
             if segment and segment.isdigit():
                 return True
@@ -245,7 +245,7 @@ class FeatureExtractor:
         """path 키워드 또는 resource_context에 의존성 목록이 존재하는지 확인."""
         path_lower = profile.path.lower()
         path_hit = any(kw in path_lower for kw in _DEPENDENCY_KEYWORDS)
-        # PM 설계(path=/, resource_context.dependencies)에서 path 키워드가 없으므로 rc도 함께 검사
+        # path=/, resource_context.dependencies 형태에서는 path 키워드가 없으므로 rc도 함께 검사
         rc = profile.resource_context or {}
         rc_hit = "dependencies" in rc
         return path_hit or rc_hit

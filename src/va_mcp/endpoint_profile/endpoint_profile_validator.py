@@ -190,7 +190,7 @@ def validate_endpoint_profile(profile: EndpointProfile) -> None:
             )
         else:
             rc = profile.resource_context
-            # O-7 fix: A03 모드(dependencies만 있고 resource_type/resource_id_key가 없음)는
+            # A03 모드(dependencies만 있고 resource_type/resource_id_key가 없음)는
             # IDOR 전용 필수 필드 검증을 건너뛴다 (normalize_resource_context와 동일한 판별 조건)
             is_a03_mode = (
                 "dependencies" in rc
