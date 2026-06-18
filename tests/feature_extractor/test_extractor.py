@@ -234,7 +234,7 @@ def test_logging_endpoint(extractor: FeatureExtractor) -> None:
 
 
 # ------------------------------------------------------------------ #
-# 13. 고도화 개선 3 — _is_state_changing: side_effect 기본값 + DELETE 메서드
+# 13. _is_state_changing: side_effect 기본값 + DELETE 메서드
 # ------------------------------------------------------------------ #
 
 def test_state_changing_by_delete_method(extractor: FeatureExtractor) -> None:
