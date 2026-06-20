@@ -80,14 +80,11 @@ security_headers
   Strict-Transport-Security, Referrer-Policy, Permissions-Policy
 - CSP 존재 시: unsafe-inline, unsafe-eval, wildcard(*) 포함 여부 추가 확인
 
-cors_misconfiguration
-- Origin: https://evil.example.com / https://attacker.com / null 로 각각 요청
-- Access-Control-Allow-Origin이 요청값을 그대로 반영하면 VULNERABLE
-- Access-Control-Allow-Credentials: true 동반 시 CRITICAL
+cors
+- skills/always/cors.md 참조
 
 error_info_exposure
-- 비정상 파라미터(null byte, 특수문자) 전송 후 응답 헤더 확인
-- X-Powered-By, Server 헤더에서 프레임워크/버전 노출 여부
+- skills/always/error_info_exposure.md 참조
 
 sensitive_path
 - /.env, /.git/config, /backup.sql, /config.yml, /docker-compose.yml 등 접근
@@ -192,10 +189,6 @@ rbac_check
 - 최저 권한 토큰으로 동일 요청 수행 → 상태코드 + 응답 body 비교
 - 상태코드 같지만 body 다르면 MEDIUM으로 기록
 
-cors_check
-- 실행 조건: auth_required=true 또는 returns_sensitive_data=true
-- cors_misconfiguration과 동일 로직, auth 토큰 첨부 상태로 추가 확인
-- ACAO 와일드카드(*) + ACAC: true 동반 시 CRITICAL
 
 forced_browsing
 - 실행 조건: 인증 필요 엔드포인트 또는 admin/config/internal 경로 패턴
