@@ -65,7 +65,7 @@ class FeatureSet:
 
     # ===== A03/A04/A08 보강 =====
     has_dependency_exposure: bool = False
-    # build-info, version, dependency 등 의존성 정보 노출 단서가 path에 존재하는지 여부
+    # build-info, version, dependency 등 의존성 정보 노출 단서가 path에 존재하거나 resource_context에 dependencies 키가 있는지 여부
 
     has_secret_handling: bool = False
     # token/secret/api-key/password reset 등 비밀정보 처리 단서가 path 또는 body에 존재하는지 여부

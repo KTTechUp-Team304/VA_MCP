@@ -143,6 +143,35 @@ def normalize_resource_context(
 
     rt = _get_str("resource_type", "resourceType")
     rid = _get_str("resource_id_key", "resourceIdKey")
+
+    # A03 : Software Supply Chain 모드 — resource_type/resource_id_key 없이
+    # runtime/dependencies만 오는 입력은 IDOR 분기와 별도로 처리
+    if rt is None and rid is None and "dependencies" in raw:
+        runtime = _get_str("runtime") or "unknown"
+        deps_raw = raw.get("dependencies")
+        if isinstance(deps_raw, Mapping):
+            deps = dict(deps_raw)
+        else:
+            msg = "dependencies는 객체(dict)여야 합니다"
+            if strict:
+                log_stage_io(
+                    logger,
+                    "normalize_resource_context.exit",
+                    input_data=None,
+                    output_data={"normalized": None, "warnings": warnings, "error": msg},
+                )
+                raise ValueError(msg)
+            warnings.append(msg)
+            deps = {}
+        normalized = {"runtime": runtime, "dependencies": deps}
+        log_stage_io(
+            logger,
+            "normalize_resource_context.exit",
+            input_data=None,
+            output_data={"normalized": normalized, "warnings": warnings},
+        )
+        return normalized, warnings
+
     if rt is None or rid is None:
         msg = "resource_context에 resource_type, resource_id_key가 필요합니다"
         if strict:
@@ -164,7 +193,7 @@ def normalize_resource_context(
 
     owner = _get_str("owner_id_key", "ownerIdKey")
     tenant = _get_str("tenant_id_key", "tenantIdKey")
-    access_type = _get_str("access_type", "accessType")  # O-6: idor_bola T-21 fix에서 사용
+    access_type = _get_str("access_type", "accessType")  # idor_bola의 교차 접근 테스트에서 사용
     hier_raw = raw.get("hierarchy_keys", raw.get("hierarchyKeys", []))
     if hier_raw is None:
         hierarchy: list[str] = []
@@ -189,7 +218,7 @@ def normalize_resource_context(
         "owner_id_key": owner,
         "tenant_id_key": tenant,
         "hierarchy_keys": hierarchy,
-        "access_type": access_type,  # O-6: None 포함하여 항상 키 존재
+        "access_type": access_type,  # None 포함하여 항상 키 존재
     }
     extra_keys = set(raw.keys()) - {
         "resource_type",

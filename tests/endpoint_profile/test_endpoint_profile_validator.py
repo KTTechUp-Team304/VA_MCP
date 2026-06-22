@@ -36,3 +36,27 @@ def test_validation_issue_has_code_field_message():
     assert issue.code
     assert issue.field
     assert issue.message
+
+
+def test_validate_resource_context_idor_still_requires_fields():
+    """회귀 확인: IDOR 입력은 여전히 resource_type/resource_id_key를 요구한다."""
+    p = EndpointProfile(
+        base_url="https://x.com",
+        method="GET",
+        path="/p",
+        resource_context={"owner_id_key": "ownerId"},
+    )
+    with pytest.raises(EndpointProfileValidationError) as ei:
+        validate_endpoint_profile(p)
+    assert any(i.code == "RESOURCE_CONTEXT" for i in ei.value.issues)
+
+
+def test_validate_resource_context_a03_mode_skips_idor_fields():
+    """dependencies만 있는 A03 입력은 resource_type/resource_id_key 없이도 통과한다."""
+    p = EndpointProfile(
+        base_url="https://x.com",
+        method="GET",
+        path="/",
+        resource_context={"runtime": "node", "dependencies": {"lodash": "4.17.11"}},
+    )
+    validate_endpoint_profile(p)

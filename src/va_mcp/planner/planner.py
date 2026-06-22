@@ -46,7 +46,7 @@ class ScenarioPlanner:
     도구별 선정 기준 (planner_tool_selection.md 기준):
 
       A01 Broken Access Control:
-        idor_bola        : has_resource_identifier AND auth_contexts >= 2  (requires_auth 무관 — P-8 fix)
+        idor_bola        : has_resource_identifier AND auth_contexts >= 2  (requires_auth 무관)
         bfla             : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
         rbac_check       : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
         forced_browsing  : requires_auth (항상)
@@ -55,7 +55,7 @@ class ScenarioPlanner:
         cors_check       : requires_auth (항상)
 
       A02 Security Misconfiguration: baseline 항상
-      A03 Software Supply Chain:     has_dependency_exposure (미구현)
+      A03 Software Supply Chain:     has_dependency_exposure → dependency_check
 
       A04 Cryptographic Failures:
         insecure_jwt           : has_secret_handling AND (is_login_endpoint OR requires_auth)
@@ -141,7 +141,7 @@ class ScenarioPlanner:
         if (has_admin or has_role_res) and auth_count >= 2:
             a01_tools.append("rbac_check")
 
-        # idor_bola: requires_auth 무관 — 공개 API도 IDOR 대상 (P-8 fix)
+        # idor_bola: requires_auth 무관 — 공개 API도 IDOR 대상
         if (has_resource or resource_ctx) and auth_count >= 2:
             a01_tools.append("idor_bola")
         elif (has_resource or resource_ctx) and requires_auth:
@@ -167,7 +167,7 @@ class ScenarioPlanner:
         # ── A03: Software Supply Chain Failures ───────────────────────
         if _get(feature_set, "has_dependency_exposure"):
             candidates.append("A03")
-            # 미구현
+            tool_ids.append("dependency_check")
 
         # ── A04: Cryptographic Failures ───────────────────────────────
         has_secret      = _get(feature_set, "has_secret_handling")
