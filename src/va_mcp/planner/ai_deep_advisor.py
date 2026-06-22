@@ -19,6 +19,111 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 MAX_TURNS = 30  # MCP 타임아웃 고려해 줄임
 
 
+# ── AuthState ────────────────────────────────────────────────────────────────
+
+@dataclass
+class AuthState:
+    tokens: dict[str, str] = field(default_factory=dict)
+    # {"admin": "eyJ...", "student": "eyJ..."}
+    role_hierarchy: list[str] = field(default_factory=list)
+    # ["admin", "professor", "student"]
+    resource_ids: dict[str, list] = field(default_factory=dict)
+    # {"userA_owns": [1, 2, 3], "userB_owns": [4, 5]}
+    baseline_responses: dict[str, Any] = field(default_factory=dict)
+    # {"admin": {"status_code": 200, "body_summary": "...", "elapsed_seconds": 0.123}}
+
+
+# ── SKILL 선택 ────────────────────────────────────────────────────────────────
+
+def select_skills(profile: EndpointProfile, auth_state: AuthState) -> list[str]:
+    """
+    EndpointProfile과 AuthState를 기반으로 실행할 SKILL 파일 경로 목록을 반환한다.
+    항상 실행할 always/ 카테고리를 기본으로 포함하고,
+    엔드포인트 특성에 따라 조건부 카테고리를 추가한다.
+    """
+    skills: list[str] = []
+
+    # always: 항상 실행
+    skills += [
+        "always/security_headers",
+        "always/cors",
+        "always/error_info_exposure",
+        "always/sensitive_path",
+        "always/debug_endpoint",
+        "always/stack_trace",
+    ]
+
+    # injection: body 또는 query 파라미터 존재 시 (빈 dict도 파라미터 있음으로 판단)
+    has_params = (
+        getattr(profile, "body", None) is not None
+        or getattr(profile, "query_params", None) is not None
+    )
+    if has_params:
+        skills += [
+            "injection/sql_injection",
+            "injection/xss_reflected",
+            "injection/ssti",
+            "injection/path_traversal",
+            "injection/cmd_injection",
+        ]
+
+    # access_control: auth_required=true 시
+    if getattr(profile, "auth_required", False):
+        skills += [
+            "access_control/forced_browsing",
+            "access_control/http_method_tamper",
+        ]
+        # role_hierarchy 2단계 이상 시 권한 비교 툴 추가
+        if len(auth_state.role_hierarchy) >= 2:
+            skills += [
+                "access_control/bfla",
+                "access_control/rbac_check",
+            ]
+        # resource_ids 존재 시 IDOR 추가
+        if auth_state.resource_ids:
+            skills.append("access_control/idor_bola")
+
+    # auth: 토큰 존재 시
+    if auth_state.tokens:
+        skills += [
+            "auth/jwt_attacks",
+            "auth/auth_bruteforce",
+            "auth/auth_lockout",
+            "auth/auth_enum",
+            "auth/auth_rate_limit",
+        ]
+        # 로그아웃 경로 명시 시 세션 무효화 테스트 추가
+        logout_path = None
+        try:
+            logout_path = profile.auth.logout.path  # type: ignore[union-attr]
+        except AttributeError:
+            pass
+        if logout_path:
+            skills.append("auth/auth_session")
+
+    # crypto: 토큰 존재 또는 Set-Cookie 가능성 있는 엔드포인트
+    if auth_state.tokens or getattr(profile, "auth_required", False):
+        skills += [
+            "crypto/insecure_jwt",
+            "crypto/cookie_security",
+        ]
+    if getattr(profile, "returns_sensitive_data", False):
+        skills.append("crypto/sensitive_data_exposure")
+
+    # business: side_effect가 create/update/delete 시
+    side_effect = getattr(profile, "side_effect", "") or ""
+    if side_effect in ("create", "update", "delete"):
+        skills += [
+            "business/rate_limit",
+            "business/retry_handling",
+            "business/business_logic",
+            "business/resource_exhaustion",
+        ]
+
+    logger.info("[select_skills] selected %d skills: %s", len(skills), skills)
+    return skills
+
+
 # ── 결과 타입 ────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -389,55 +494,71 @@ def run_reconnaissance(
     return AuthState()
 
 
-# ── 메인 에이전틱 루프 ────────────────────────────────────────────────────────
+# ── Attack Phase 루프 ─────────────────────────────────────────────────────────
 
-def run_deep_scan(
+def run_attack_phase(
     profile: EndpointProfile,
+    auth_state: AuthState,
+    applicable_skills: list[str],
     model: str = "gpt-4o",
 ) -> DeepScanResult:
     """
-    딥 스캔 에이전틱 루프.
-
-    AI가 get_mcp_context / execute_probe / report_findings 툴을 자율적으로
-    호출하며 취약점을 분석합니다. report_findings 호출 시 루프가 종료됩니다.
+    Phase 1: Attack.
+    auth_state와 선택된 SKILL 목록을 주입받아 취약점 분석을 수행한다.
     """
     from openai import OpenAI
 
     client = OpenAI()
-    system_prompt = load_skill("deep_mode_prompt")
     profile_dict = profile.to_serializable_dict()
     base_url = profile.base_url
 
+    # SKILL 파일 로드 및 결합
+    skill_contents: list[str] = []
+    for skill_name in applicable_skills:
+        try:
+            skill_contents.append(f"=== {skill_name} ===\n{load_skill(skill_name)}")
+        except FileNotFoundError:
+            logger.warning("[attack_phase] skill not found: %s", skill_name)
+
+    system_prompt = load_skill("orchestrator")
+    skill_block = "\n\n".join(skill_contents)
+
+    # auth_state를 구조화된 컨텍스트로 직렬화
+    auth_context = json.dumps({
+        "tokens": auth_state.tokens,
+        "role_hierarchy": auth_state.role_hierarchy,
+        "resource_ids": auth_state.resource_ids,
+        "baseline_responses": auth_state.baseline_responses,
+    }, ensure_ascii=False)
+
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt + "\n\n【언어 규칙】 report_findings()의 모든 필드(title, evidence, attack_scenario, recommendation)는 반드시 한국어로 작성하세요."},
+        {"role": "system", "content": system_prompt},
         {
             "role": "user",
             "content": (
                 "딥 스캔을 시작하세요. 먼저 get_mcp_context()를 호출하세요.\n\n"
-                "【필수 규칙 1 — 기본 스캔 항목】\n"
-                "아래 항목은 서버가 500을 반환하더라도 반드시 직접 프로브하고 결과를 findings에 포함하세요:\n"
-                "1. security_headers: 응답 헤더에 CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy 존재 여부 확인. 없으면 VULNERABLE.\n"
-                "2. error_info_exposure: 응답 헤더의 X-Powered-By, Server 값 확인. 존재하면 VULNERABLE.\n"
-                "3. debug_endpoint: /api-docs, /swagger, /health, /metrics 경로에 GET 요청. 200 반환 시 VULNERABLE.\n"
-                "4. cors_misconfiguration: Origin: https://evil.example.com 헤더로 요청. ACAO가 반영되면 VULNERABLE.\n"
-                "5. retry_handling: 동일 요청 20회 연속 전송. 429가 없으면 VULNERABLE.\n"
-                "6. sensitive_path: /.env, /.git/config 접근. 200이면 VULNERABLE.\n\n"
-                "【필수 규칙 2 — 500 응답 처리】\n"
-                "500 응답도 분석 대상입니다. 응답 헤더에서 X-Powered-By, Server 등을 확인하고, "
-                "보안 헤더 누락 여부를 체크하세요. 500이라고 findings를 비워두지 마세요.\n\n"
-                "STEP 1 ~ STEP 5를 진행한 뒤 report_findings()로 결과를 보고하세요."
+                f"【주입된 auth_state】\n{auth_context}\n\n"
+                f"【실행할 SKILL 목록】\n아래 SKILL을 순서대로 실행하세요:\n"
+                + "\n".join(f"- {s}" for s in applicable_skills)
+                + f"\n\n【SKILL 상세 내용】\n{skill_block}\n\n"
+                "【필수 규칙】\n"
+                "- 각 SKILL의 PROBE-N을 순서대로 실행하세요.\n"
+                "- 판단은 SKILL의 수치 기준을 따르고, auth_state.baseline_responses 대비 변화량을 우선 참조하세요.\n"
+                "- evidence 필드에는 실제 요청 URL + 페이로드 + 응답 코드 + 응답 본문 발췌를 반드시 포함하세요. 추론 금지.\n"
+                "- 4xx/5xx 응답은 정지 기준이 아닙니다. 계속 진행하세요.\n\n"
+                "모든 SKILL 실행 후 report_findings()로 결과를 보고하세요."
             ),
         },
     ]
 
     turn = 0
-    probe_count = 0  # execute_probe 호출 횟수 추적
-    MIN_PROBES = 8   # report_findings 허용 최소 프로브 수
+    probe_count = 0
+    MIN_PROBES = max(len(applicable_skills), 8)
     final: DeepScanResult | None = None
 
     while turn < MAX_TURNS:
         turn += 1
-        logger.info("[deep_scan] turn=%d", turn)
+        logger.info("[attack_phase] turn=%d", turn)
 
         response = client.chat.completions.create(
             model=model,
@@ -448,7 +569,6 @@ def run_deep_scan(
 
         msg = response.choices[0].message
 
-        # assistant 메시지 저장 (tool_calls 포함 직렬화)
         assistant_entry: dict[str, Any] = {"role": "assistant"}
         if msg.content:
             assistant_entry["content"] = msg.content
@@ -463,29 +583,10 @@ def run_deep_scan(
             ]
         messages.append(assistant_entry)
 
-        # 툴 호출 없으면 — probe 최소치 미달 시 강제 계속
         if not msg.tool_calls:
-            if probe_count < MIN_PROBES:
-                remaining = MIN_PROBES - probe_count
-                logger.warning(
-                    "[deep_scan] no tool calls but probe_count=%d < MIN_PROBES=%d — forcing continue",
-                    probe_count, MIN_PROBES,
-                )
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        f"분석이 너무 일찍 종료됩니다. "
-                        f"execute_probe를 최소 {remaining}번 더 실행한 뒤 report_findings()를 호출하세요. "
-                        f"500 응답도 분석 대상입니다. 응답 헤더에서 보안 헤더 누락 여부를 확인하고 "
-                        f"security_headers, cors_misconfiguration, error_info_exposure, "
-                        f"debug_endpoint, retry_handling 항목을 계속 수행하세요."
-                    ),
-                })
-                continue
-            logger.info("[deep_scan] no tool calls — ending at turn=%d", turn)
+            logger.info("[attack_phase] no tool calls — ending at turn=%d", turn)
             break
 
-        # 툴 실행
         tool_results: list[dict[str, Any]] = []
         should_stop = False
 
@@ -496,7 +597,7 @@ def run_deep_scan(
             except json.JSONDecodeError:
                 args = {}
 
-            logger.info("[deep_scan] tool=%s", fn)
+            logger.info("[attack_phase] tool=%s", fn)
 
             if fn == "get_mcp_context":
                 result = profile_dict
@@ -516,18 +617,16 @@ def run_deep_scan(
 
             elif fn == "report_findings":
                 if probe_count < MIN_PROBES:
-                    # 프로브가 충분하지 않으면 계속 강제
                     remaining = MIN_PROBES - probe_count
                     logger.warning(
-                        "[deep_scan] report_findings blocked: probe_count=%d < MIN_PROBES=%d",
+                        "[attack_phase] report_findings blocked: probe_count=%d < MIN_PROBES=%d",
                         probe_count, MIN_PROBES,
                     )
                     result = {
                         "error": (
                             f"분석이 너무 일찍 종료됩니다. "
                             f"execute_probe를 최소 {remaining}번 더 실행한 뒤 보고하세요. "
-                            f"security_headers, cors_misconfiguration, error_info_exposure, "
-                            f"debug_endpoint, retry_handling 등 기본 툴을 실행하세요."
+                            f"주입된 SKILL 목록의 PROBE-N을 순서대로 실행하세요."
                         )
                     }
                 else:
@@ -551,11 +650,37 @@ def run_deep_scan(
         messages.extend(tool_results)
 
         if should_stop:
-            logger.info("[deep_scan] report_findings called — stopping at turn=%d", turn)
+            logger.info("[attack_phase] report_findings called — stopping at turn=%d", turn)
             break
 
     if final is None:
-        logger.warning("[deep_scan] MAX_TURNS(%d) reached without report_findings", MAX_TURNS)
+        logger.warning("[attack_phase] MAX_TURNS(%d) reached without report_findings", MAX_TURNS)
         final = DeepScanResult(turns_used=turn)
 
     return final
+
+
+# ── 메인 오케스트레이터 ───────────────────────────────────────────────────────
+
+def run_deep_scan(
+    profile: EndpointProfile,
+    model: str = "gpt-4o",
+    auth_state: AuthState | None = None,
+) -> DeepScanResult:
+    """
+    딥 스캔 오케스트레이터.
+
+    Phase 0(reconnaissance)는 팀원이 구현 중. 완성 전까지 빈 AuthState로 fallback.
+    Phase 1(attack)은 select_skills() + run_attack_phase()로 실행.
+    """
+    # Phase 0 결과가 없으면 빈 AuthState로 graceful fallback
+    if auth_state is None:
+        logger.info("[run_deep_scan] auth_state not provided — using empty AuthState (Phase 0 pending)")
+        auth_state = AuthState()
+
+    # SKILL 선택
+    applicable_skills = select_skills(profile, auth_state)
+    logger.info("[run_deep_scan] Phase 1 start — skills=%d", len(applicable_skills))
+
+    # Phase 1: Attack
+    return run_attack_phase(profile, auth_state, applicable_skills, model)
