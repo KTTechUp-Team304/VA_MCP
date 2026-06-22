@@ -22,6 +22,14 @@ MAX_TURNS = 30  # MCP 타임아웃 고려해 줄임
 # ── 결과 타입 ────────────────────────────────────────────────────────────────
 
 @dataclass
+class AuthState:
+    tokens: dict[str, str] = field(default_factory=dict)
+    role_hierarchy: list[str] = field(default_factory=list)
+    resource_ids: dict[str, list] = field(default_factory=dict)
+    baseline_responses: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class DeepScanResult:
     dynamic_context: dict = field(default_factory=dict)
     findings: list[dict] = field(default_factory=list)
@@ -144,6 +152,86 @@ _TOOLS: list[dict[str, Any]] = [
 ]
 
 
+# ── Reconnaissance 툴 스키마 ──────────────────────────────────────────────────
+
+_RECON_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_mcp_context",
+            "description": (
+                "엔드포인트 프로필 정보를 반환합니다. "
+                "base_url, auth, accounts[] 등 컨텍스트를 확인하려면 이 툴을 먼저 호출하세요."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_probe",
+            "description": (
+                "HTTP 프로브를 실행하고 응답(status_code, headers, body, elapsed_seconds)을 반환합니다. "
+                "로그인 및 베이스라인 수집에만 사용하세요. 공격성 페이로드는 사용하지 마세요."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "method": {"type": "string"},
+                    "path": {"type": "string"},
+                    "headers": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                    },
+                    "body": {"type": "object"},
+                    "query_params": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                    },
+                    "timeout": {"type": "number"},
+                    "override_url": {"type": "string"},
+                },
+                "required": ["method", "path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "report_recon",
+            "description": (
+                "Reconnaissance 완료 후 수집된 토큰, 권한 계층, 리소스 ID, 베이스라인 응답을 반환합니다. "
+                "이 툴을 호출하면 Phase 0이 종료됩니다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tokens": {
+                        "type": "object",
+                        "description": "role명 → JWT 토큰 매핑. 예) {\"admin\": \"eyJ...\"}",
+                        "additionalProperties": {"type": "string"},
+                    },
+                    "role_hierarchy": {
+                        "type": "array",
+                        "description": "높은 권한 순으로 정렬된 role 목록. 예) [\"admin\", \"student\"]",
+                        "items": {"type": "string"},
+                    },
+                    "resource_ids": {
+                        "type": "object",
+                        "description": "계정별 소유 리소스 ID 목록. 예) {\"A_owns\": [1, 2, 3]}",
+                    },
+                    "baseline_responses": {
+                        "type": "object",
+                        "description": "role명 → 베이스라인 응답 매핑. anonymous 포함.",
+                    },
+                },
+                "required": ["tokens", "role_hierarchy", "resource_ids", "baseline_responses"],
+            },
+        },
+    },
+]
+
+
 # ── 프로브 실행기 ─────────────────────────────────────────────────────────────
 
 def _execute_probe(
@@ -183,6 +271,122 @@ def _execute_probe(
         return {"error": f"connection_error: {e}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ── Phase 0: Reconnaissance ───────────────────────────────────────────────────
+
+MAX_RECON_TURNS = 10
+
+
+def run_reconnaissance(
+    profile: EndpointProfile,
+    model: str = "gpt-4o",
+) -> AuthState:
+    """
+    Phase 0: 공격 없이 토큰 수집, 베이스라인 저장, 리소스 ID 매핑만 수행합니다.
+    실패 시 빈 AuthState를 반환해 Phase 1이 graceful fallback으로 동작합니다.
+    """
+    from openai import OpenAI
+
+    client = OpenAI()
+    system_prompt = load_skill("reconnaissance")
+    profile_dict = profile.to_serializable_dict()
+    base_url = profile.base_url
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": (
+                "Reconnaissance를 시작하세요. "
+                "먼저 get_mcp_context()를 호출한 뒤 STEP 1~5를 순서대로 수행하고 "
+                "report_recon()으로 결과를 반환하세요."
+            ),
+        },
+    ]
+
+    for turn in range(1, MAX_RECON_TURNS + 1):
+        logger.info("[recon] turn=%d", turn)
+
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                tools=_RECON_TOOLS,
+                tool_choice="auto",
+                messages=messages,
+            )
+        except Exception as e:
+            logger.error("[recon] LLM 호출 실패: %s", e)
+            return AuthState()
+
+        msg = response.choices[0].message
+
+        assistant_entry: dict[str, Any] = {"role": "assistant"}
+        if msg.content:
+            assistant_entry["content"] = msg.content
+        if msg.tool_calls:
+            assistant_entry["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in msg.tool_calls
+            ]
+        messages.append(assistant_entry)
+
+        if not msg.tool_calls:
+            logger.warning("[recon] 툴 호출 없이 종료 — turn=%d", turn)
+            break
+
+        tool_results: list[dict[str, Any]] = []
+
+        for tc in msg.tool_calls:
+            fn = tc.function.name
+            try:
+                args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+            except json.JSONDecodeError:
+                args = {}
+
+            logger.info("[recon] tool=%s", fn)
+
+            if fn == "get_mcp_context":
+                result = profile_dict
+
+            elif fn == "execute_probe":
+                result = _execute_probe(
+                    base_url=base_url,
+                    method=args.get("method", "GET"),
+                    path=args.get("path", "/"),
+                    headers=args.get("headers"),
+                    body=args.get("body"),
+                    query_params=args.get("query_params"),
+                    timeout=float(args.get("timeout", 10)),
+                    override_url=args.get("override_url"),
+                )
+
+            elif fn == "report_recon":
+                logger.info("[recon] report_recon 호출 — Phase 0 완료 (turn=%d)", turn)
+                return AuthState(
+                    tokens=args.get("tokens", {}),
+                    role_hierarchy=args.get("role_hierarchy", []),
+                    resource_ids=args.get("resource_ids", {}),
+                    baseline_responses=args.get("baseline_responses", {}),
+                )
+
+            else:
+                result = {"error": f"unknown tool: {fn}"}
+
+            tool_results.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps(result, ensure_ascii=False),
+            })
+
+        messages.extend(tool_results)
+
+    logger.warning("[recon] MAX_RECON_TURNS(%d) 초과 — 빈 AuthState 반환", MAX_RECON_TURNS)
+    return AuthState()
 
 
 # ── 메인 에이전틱 루프 ────────────────────────────────────────────────────────
@@ -259,8 +463,25 @@ def run_deep_scan(
             ]
         messages.append(assistant_entry)
 
-        # 툴 호출 없으면 종료
+        # 툴 호출 없으면 — probe 최소치 미달 시 강제 계속
         if not msg.tool_calls:
+            if probe_count < MIN_PROBES:
+                remaining = MIN_PROBES - probe_count
+                logger.warning(
+                    "[deep_scan] no tool calls but probe_count=%d < MIN_PROBES=%d — forcing continue",
+                    probe_count, MIN_PROBES,
+                )
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"분석이 너무 일찍 종료됩니다. "
+                        f"execute_probe를 최소 {remaining}번 더 실행한 뒤 report_findings()를 호출하세요. "
+                        f"500 응답도 분석 대상입니다. 응답 헤더에서 보안 헤더 누락 여부를 확인하고 "
+                        f"security_headers, cors_misconfiguration, error_info_exposure, "
+                        f"debug_endpoint, retry_handling 항목을 계속 수행하세요."
+                    ),
+                })
+                continue
             logger.info("[deep_scan] no tool calls — ending at turn=%d", turn)
             break
 
