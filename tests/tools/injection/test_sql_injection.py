@@ -126,3 +126,34 @@ def test_time_based_blind():
                             extra={"detect_time_based": True})
         )
     assert result.status == ToolStatus.VULNERABLE.value
+
+
+def test_vulnerable_list_response_row_count_changed():
+    """baseline은 빈 list, payload 응답이 더 많은 행을 반환하면 list 기반 SQLi로 탐지된다."""
+    baseline_resp = make_resp(200, "[]")
+    payload_resp = make_resp(200, '[{"id": 1}, {"id": 2}]')
+    payload_resp.json.return_value = [{"id": 1}, {"id": 2}]
+    with patch("va_mcp.tools.injection.sql_injection.requests.request",
+               return_value=baseline_resp), \
+         patch("va_mcp.tools.injection.sql_injection.requests.get",
+               return_value=payload_resp):
+        result = SqlInjectionTool().run(
+            make_tool_input(query={"category": "CS"})
+        )
+    assert result.status == ToolStatus.VULNERABLE.value
+    assert any("행 개수 변화" in e.note for e in result.evidence)
+
+
+def test_passed_list_response_same_row_count():
+    """baseline과 payload 응답의 행 개수가 같으면 list 기반 신호로 오탐하지 않는다."""
+    baseline_resp = make_resp(200, '[{"id": 1}]')
+    payload_resp = make_resp(200, '[{"id": 1}]')
+    payload_resp.json.return_value = [{"id": 1}]
+    with patch("va_mcp.tools.injection.sql_injection.requests.request",
+               return_value=baseline_resp), \
+         patch("va_mcp.tools.injection.sql_injection.requests.get",
+               return_value=payload_resp):
+        result = SqlInjectionTool().run(
+            make_tool_input(query={"category": "CS"})
+        )
+    assert result.status == ToolStatus.PASSED.value

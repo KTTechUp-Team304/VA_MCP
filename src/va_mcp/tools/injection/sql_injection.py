@@ -15,6 +15,7 @@ extra 옵션:
 
 from __future__ import annotations
 
+import json
 import requests
 import time
 from typing import Any, Dict, List
@@ -266,8 +267,11 @@ class SqlInjectionTool(BaseTool):
                         and 200 <= resp.status_code < 300
                     )
 
-                    # C) JSON 성공 지표 감지 + baseline 응답과 다름
+                    # C) JSON 성공 지표 감지 + baseline 응답과 다름 (dict 응답 — 로그인 등 토큰형 성공)
                     json_success = False
+                    # D) baseline 대비 응답 행 개수 변화 (list 응답 — 목록 조회 등 데이터 노출형 bypass)
+                    list_count_changed = False
+                    list_count_before = list_count_after = None
                     if 200 <= resp.status_code < 300:
                         try:
                             resp_json = resp.json()
@@ -275,10 +279,16 @@ class SqlInjectionTool(BaseTool):
                                 json_success = bool(
                                     _SUCCESS_KEYS & set(resp_json.keys())
                                 ) and resp.text.strip() != baseline_text
+                            elif isinstance(resp_json, list):
+                                baseline_json = json.loads(baseline_text)
+                                if isinstance(baseline_json, list):
+                                    list_count_before = len(baseline_json)
+                                    list_count_after = len(resp_json)
+                                    list_count_changed = list_count_before != list_count_after
                         except Exception:
                             pass
 
-                    if detected or status_changed or json_success:
+                    if detected or status_changed or json_success or list_count_changed:
                         reasons = []
                         if detected:
                             reasons.append(f"SQL 에러 시그니처: {detected[:3]}")
@@ -286,6 +296,10 @@ class SqlInjectionTool(BaseTool):
                             reasons.append(f"상태코드 변화: {baseline_status} → {resp.status_code} (bypass 성공)")
                         if json_success:
                             reasons.append("JSON 성공 응답 수신 (토큰/인증 키 포함, baseline과 상이)")
+                        if list_count_changed:
+                            reasons.append(
+                                f"응답 행 개수 변화: baseline {list_count_before}건 → {list_count_after}건 (데이터 노출형 bypass 가능성)"
+                            )
 
                         evidences.append(
                             Evidence(
