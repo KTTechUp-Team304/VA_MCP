@@ -252,6 +252,16 @@ def test_a05_resource_identifier_selects_sql_injection(planner):
     assert "sql_injection" in out.tool_ids
 
 
+def test_a05_resource_identifier_selects_xss_ssti_path_traversal_cmd(planner):
+    """has_user_input + has_resource_identifier → xss_reflected/ssti_injection/path_traversal/cmd_injection 선정 (path param 단독 리소스 ID 엔드포인트, free_text 없이도 선정됨)."""
+    fs = FeatureSet(has_user_input=True, has_resource_identifier=True)
+    out = planner.plan(fs)
+    assert "xss_reflected" in out.tool_ids
+    assert "ssti_injection" in out.tool_ids
+    assert "path_traversal" in out.tool_ids
+    assert "cmd_injection" in out.tool_ids
+
+
 # ------------------------------------------------------------------
 # A04 — Cryptographic Failures
 # ------------------------------------------------------------------

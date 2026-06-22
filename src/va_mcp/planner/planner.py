@@ -64,11 +64,11 @@ class ScenarioPlanner:
 
       A05 Injection:
         sql_injection  : has_user_input AND (has_free_text_input OR has_enum_input OR has_credential_fields OR has_resource_identifier)
-        cmd_injection  : has_user_input AND has_free_text_input AND (has_debug_feature OR has_file_or_config_surface)
-        xss_reflected  : has_user_input AND has_free_text_input
-        ssti_injection : has_user_input AND has_free_text_input
+        cmd_injection  : has_user_input AND ((has_free_text_input AND (has_debug_feature OR has_file_or_config_surface)) OR has_resource_identifier)
+        xss_reflected  : has_user_input AND (has_free_text_input OR has_resource_identifier)
+        ssti_injection : has_user_input AND (has_free_text_input OR has_resource_identifier)
         header_injection: has_user_input
-        path_traversal : has_user_input AND (has_file_or_config_surface OR has_free_text_input)
+        path_traversal : has_user_input AND (has_file_or_config_surface OR has_free_text_input OR has_resource_identifier)
 
       A06 Insecure Design:
         rate_limit_check   : is_state_changing
@@ -205,11 +205,11 @@ class ScenarioPlanner:
                 a05_tools.append("sql_injection")
 
             # cmd_injection
-            if has_free_text and (has_debug or has_file_cfg):
+            if (has_free_text and (has_debug or has_file_cfg)) or has_resource:
                 a05_tools.append("cmd_injection")
 
             # xss_reflected, ssti_injection
-            if has_free_text:
+            if has_free_text or has_resource:
                 a05_tools.append("xss_reflected")
                 a05_tools.append("ssti_injection")
 
@@ -217,7 +217,7 @@ class ScenarioPlanner:
             a05_tools.append("header_injection")
 
             # path_traversal
-            if has_file_cfg or has_free_text:
+            if has_file_cfg or has_free_text or has_resource:
                 a05_tools.append("path_traversal")
 
         if a05_tools:
