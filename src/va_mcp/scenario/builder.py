@@ -14,6 +14,8 @@ class ScenarioPlanBuilder:
     tool_ids는 PlannerOutput.tool_ids 중 OWASP_TOOL_MAP 기준으로 해당 카테고리에
     속하는 도구만 필터링해서 사용한다. 중복 실행을 방지하고 카테고리별 도구 분리를 유지한다.
     need_more_context=True일 때도 호출 가능하며, 상위 ScenarioRunner가 처리를 결정한다.
+
+    A01(접근 제어) plan은 리소스가 변형되기 전에 평가해야 하므로 항상 최우선 실행한다.
     """
 
     def build(self, output: PlannerOutput, profile: EndpointProfile) -> list[ScenarioPlan]:
@@ -22,4 +24,6 @@ class ScenarioPlanBuilder:
             category_pool = set(OWASP_TOOL_MAP.get(owasp, []))
             category_tools = [t for t in output.tool_ids if t in category_pool]
             plans.append(ScenarioPlan(owasp=owasp, tool_ids=category_tools, endpoint=profile))
+
+        plans.sort(key=lambda p: 0 if p.owasp == "A01" else 1)
         return plans
