@@ -127,14 +127,6 @@ def select_skills(profile: EndpointProfile, auth_state: AuthState) -> list[str]:
 # ── 결과 타입 ────────────────────────────────────────────────────────────────
 
 @dataclass
-class AuthState:
-    tokens: dict[str, str] = field(default_factory=dict)
-    role_hierarchy: list[str] = field(default_factory=list)
-    resource_ids: dict[str, list] = field(default_factory=dict)
-    baseline_responses: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
 class DeepScanResult:
     dynamic_context: dict = field(default_factory=dict)
     findings: list[dict] = field(default_factory=list)
@@ -669,14 +661,18 @@ def run_deep_scan(
 ) -> DeepScanResult:
     """
     딥 스캔 오케스트레이터.
-
-    Phase 0(reconnaissance)는 팀원이 구현 중. 완성 전까지 빈 AuthState로 fallback.
-    Phase 1(attack)은 select_skills() + run_attack_phase()로 실행.
+    Phase 0(reconnaissance) → Phase 1(attack) 순서로 실행.
     """
-    # Phase 0 결과가 없으면 빈 AuthState로 graceful fallback
+    # Phase 0: Reconnaissance
     if auth_state is None:
-        logger.info("[run_deep_scan] auth_state not provided — using empty AuthState (Phase 0 pending)")
-        auth_state = AuthState()
+        logger.info("[run_deep_scan] Phase 0 start — reconnaissance")
+        auth_state = run_reconnaissance(profile, model)
+        logger.info(
+            "[run_deep_scan] Phase 0 complete — tokens=%d, roles=%d, resources=%d",
+            len(auth_state.tokens),
+            len(auth_state.role_hierarchy),
+            len(auth_state.resource_ids),
+        )
 
     # SKILL 선택
     applicable_skills = select_skills(profile, auth_state)
