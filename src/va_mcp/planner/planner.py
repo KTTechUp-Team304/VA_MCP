@@ -63,7 +63,7 @@ class ScenarioPlanner:
         sensitive_data_exposure: has_secret_handling OR returns_sensitive_data OR has_debug_feature
 
       A05 Injection:
-        sql_injection  : has_user_input AND (has_free_text_input OR has_enum_input)
+        sql_injection  : has_user_input AND (has_free_text_input OR has_enum_input OR has_credential_fields OR has_resource_identifier)
         cmd_injection  : has_user_input AND has_free_text_input AND (has_debug_feature OR has_file_or_config_surface)
         xss_reflected  : has_user_input AND has_free_text_input
         ssti_injection : has_user_input AND has_free_text_input
@@ -201,7 +201,7 @@ class ScenarioPlanner:
 
         if has_user_input:
             # sql_injection
-            if has_free_text or has_enum or has_cred:
+            if has_free_text or has_enum or has_cred or has_resource:
                 a05_tools.append("sql_injection")
 
             # cmd_injection
