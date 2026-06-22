@@ -14,6 +14,7 @@ def make_tool_input(
     query: dict | None = None,
     body: dict | None = None,
     headers: dict | None = None,
+    params: dict | None = None,
     safe_mode: bool = False,      # ← 기본을 False 로 변경
     timeout: int = 5000,
     max_requests: int = 10,
@@ -26,6 +27,7 @@ def make_tool_input(
             path=path,
             headers=headers or {},
             query=query or {},
+            params=params or {},
             body=body,
         ),
         options=ToolOptions(
@@ -126,3 +128,74 @@ def test_time_based_blind():
                             extra={"detect_time_based": True})
         )
     assert result.status == ToolStatus.VULNERABLE.value
+
+
+def test_vulnerable_list_response_row_count_changed():
+    """baseline은 빈 list, payload 응답이 더 많은 행을 반환하면 list 기반 SQLi로 탐지된다."""
+    baseline_resp = make_resp(200, "[]")
+    payload_resp = make_resp(200, '[{"id": 1}, {"id": 2}]')
+    payload_resp.json.return_value = [{"id": 1}, {"id": 2}]
+    with patch("va_mcp.tools.injection.sql_injection.requests.request",
+               return_value=baseline_resp), \
+         patch("va_mcp.tools.injection.sql_injection.requests.get",
+               return_value=payload_resp):
+        result = SqlInjectionTool().run(
+            make_tool_input(query={"category": "CS"})
+        )
+    assert result.status == ToolStatus.VULNERABLE.value
+    assert any("행 개수 변화" in e.note for e in result.evidence)
+
+
+def test_passed_list_response_same_row_count():
+    """baseline과 payload 응답의 행 개수가 같으면 list 기반 신호로 오탐하지 않는다."""
+    baseline_resp = make_resp(200, '[{"id": 1}]')
+    payload_resp = make_resp(200, '[{"id": 1}]')
+    payload_resp.json.return_value = [{"id": 1}]
+    with patch("va_mcp.tools.injection.sql_injection.requests.request",
+               return_value=baseline_resp), \
+         patch("va_mcp.tools.injection.sql_injection.requests.get",
+               return_value=payload_resp):
+        result = SqlInjectionTool().run(
+            make_tool_input(query={"category": "CS"})
+        )
+    assert result.status == ToolStatus.PASSED.value
+
+
+def test_vulnerable_generic_500_after_baseline_200():
+    """SQL 에러 시그니처가 없는 일반 500도 baseline(200) 대비 변화 신호로 탐지된다 (T-23 부가 발견)."""
+    baseline_resp = make_resp(200, '{"id": 36}')
+    payload_resp = make_resp(500, '{"statusCode":500,"message":"Internal server error"}')
+    with patch("va_mcp.tools.injection.sql_injection.requests.request",
+               return_value=baseline_resp), \
+         patch("va_mcp.tools.injection.sql_injection.requests.get",
+               return_value=payload_resp):
+        result = SqlInjectionTool().run(
+            make_tool_input(query={"q": "hello"})
+        )
+    assert result.status == ToolStatus.VULNERABLE.value
+    assert any("시그니처 없는 서버 예외" in e.note for e in result.evidence)
+
+
+def test_vulnerable_path_param_fallback():
+    """query/body가 없는 path-param 전용 엔드포인트에서 payload가 쿼리스트링이 아니라
+    실제 URL 경로 세그먼트에 percent-encode되어 주입되는지 확인한다 (T-23)."""
+    baseline_resp = make_resp(200, '{"id": 36}')
+    payload_resp = make_resp(500, '{"statusCode":500,"message":"Internal server error"}')
+    with patch("va_mcp.tools.injection.sql_injection.requests.request",
+               return_value=baseline_resp), \
+         patch("va_mcp.tools.injection.sql_injection.requests.get",
+               return_value=payload_resp) as mock_get:
+        result = SqlInjectionTool().run(
+            make_tool_input(
+                path="/api/users/36",
+                params={"userId": "36"},
+                safe_mode=True,
+                payload_list=["' OR '1'='1"],
+            )
+        )
+    assert result.status == ToolStatus.VULNERABLE.value
+    called_url = mock_get.call_args[0][0]
+    assert "/api/users/36" not in called_url
+    assert "%27" in called_url
+    called_kwargs = mock_get.call_args[1]
+    assert not called_kwargs.get("params")

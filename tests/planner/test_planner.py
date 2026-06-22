@@ -20,6 +20,7 @@ ScenarioPlanner 테스트 — OWASP Top 10 2025 기준
   test_a05_user_input_with_free_text              - has_user_input + has_free_text_input → A05 선정
   test_a05_user_input_with_file_surface           - has_user_input + has_file_or_config_surface → A05 선정
   test_a05_user_input_alone_only_header_injection  - has_user_input 단독 → header_injection만 선정, A05 포함
+  test_a05_resource_identifier_selects_sql_injection - has_user_input + has_resource_identifier → sql_injection 선정
 
   [A04] Cryptographic Failures
   test_a04_secret_handling                        - has_secret_handling → A04 선정
@@ -242,6 +243,23 @@ def test_a05_user_input_alone_only_header_injection(planner):
     assert "sql_injection" not in out.tool_ids
     assert "xss_reflected" not in out.tool_ids
     assert "cmd_injection" not in out.tool_ids
+
+
+def test_a05_resource_identifier_selects_sql_injection(planner):
+    """has_user_input + has_resource_identifier → sql_injection 선정 (path param 단독 리소스 ID 엔드포인트)."""
+    fs = FeatureSet(has_user_input=True, has_resource_identifier=True)
+    out = planner.plan(fs)
+    assert "sql_injection" in out.tool_ids
+
+
+def test_a05_resource_identifier_selects_xss_ssti_path_traversal_cmd(planner):
+    """has_user_input + has_resource_identifier → xss_reflected/ssti_injection/path_traversal/cmd_injection 선정 (path param 단독 리소스 ID 엔드포인트, free_text 없이도 선정됨)."""
+    fs = FeatureSet(has_user_input=True, has_resource_identifier=True)
+    out = planner.plan(fs)
+    assert "xss_reflected" in out.tool_ids
+    assert "ssti_injection" in out.tool_ids
+    assert "path_traversal" in out.tool_ids
+    assert "cmd_injection" in out.tool_ids
 
 
 # ------------------------------------------------------------------

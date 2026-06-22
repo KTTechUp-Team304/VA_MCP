@@ -15,7 +15,11 @@ test_build_no_duplicate_tools_across_plans       - 동일 도구가 여러 plan�
 
 [엣지 케이스]
 test_build_empty_candidates_returns_empty_list   - owasp_candidates 없으면 빈 리스트
-test_build_order_preserved                       - 입력 순서 보존
+test_build_order_preserved                       - 입력 순서 보존 (A01 미포함 케이스)
+
+[실행 순서]
+test_build_a01_always_first                      - A01이 owasp_candidates 뒤쪽에 있어도 plan 순서는 항상 맨 앞
+test_build_a01_first_preserves_relative_order_of_rest - A01 제외 나머지 카테고리는 상대 순서 유지
 """
 
 import pytest
@@ -133,3 +137,27 @@ def test_build_order_preserved(builder, profile):
     )
     plans = builder.build(output, profile)
     assert [p.owasp for p in plans] == ["A02", "A07", "A10"]
+
+
+# ------------------------------------------------------------------
+# 실행 순서 (A01은 항상 최우선 실행)
+# ------------------------------------------------------------------
+
+def test_build_a01_always_first(builder, profile):
+    """A02가 owasp_candidates에서 A01보다 앞에 있어도, plan 순서는 A01이 먼저여야 한다."""
+    output = PlannerOutput(
+        owasp_candidates=["A02", "A01", "A10"],
+        tool_ids=[],
+    )
+    plans = builder.build(output, profile)
+    assert [p.owasp for p in plans] == ["A01", "A02", "A10"]
+
+
+def test_build_a01_first_preserves_relative_order_of_rest(builder, profile):
+    """A01을 맨 앞으로 옮기는 정렬이 나머지 카테고리의 상대 순서는 바꾸지 않아야 한다."""
+    output = PlannerOutput(
+        owasp_candidates=["A04", "A02", "A01", "A07", "A10"],
+        tool_ids=[],
+    )
+    plans = builder.build(output, profile)
+    assert [p.owasp for p in plans] == ["A01", "A04", "A02", "A07", "A10"]

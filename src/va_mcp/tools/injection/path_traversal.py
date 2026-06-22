@@ -14,7 +14,7 @@ from __future__ import annotations
 import requests
 import time
 from typing import Any, Dict, List
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
 from va_mcp.core.base import BaseTool
 from va_mcp.core.schemas import ToolInput, ToolResult, Evidence, AuthContext
@@ -63,10 +63,21 @@ PATH_TRAVERSAL_SIGNATURES = [
 ]
 
 
+def _inject_payload_into_path(path: str, original_value: str, new_value: str) -> str:
+    """path의 세그먼트 중 원본 path param 값과 정확히 일치하는 세그먼트만 new_value로 치환한다.
+    new_value 전체를 percent-encode하여 단일 세그먼트로 취급한다 — 그렇지 않으면 페이로드 안의
+    '../' 등이 urljoin의 dot-segment 정규화에 의해 클라이언트 단계에서 미리 소거되어,
+    백엔드가 라우트 파라미터로 받아야 할 원본 문자열이 아예 도달하지 못한다.
+    """
+    encoded = quote(new_value, safe="")
+    segments = path.split("/")
+    return "/".join(encoded if seg == original_value else seg for seg in segments)
+
+
 class PathTraversalTool(BaseTool):
     tool_id = "path_traversal"
     tool_name = "Path Traversal Testing"
-    tool_version = "0.1.0"
+    tool_version = "0.2.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         start_ts   = time.time()
@@ -110,6 +121,10 @@ class PathTraversalTool(BaseTool):
         else:
             test_params = list(body.keys())
         test_params = test_params or path_params
+        # query/body에 실제 파라미터가 없어 path_params로 폴백한 경우 — 페이로드를 쿼리스트링이
+        # 아니라 실제 URL 경로 세그먼트에 주입해야 한다(T-23).
+        has_real_params = bool(query) if method == "GET" else bool(body)
+        using_path_fallback = not has_real_params and bool(path_params)
 
         if not test_params:
             ended_at   = utc_now_iso()
@@ -171,7 +186,33 @@ class PathTraversalTool(BaseTool):
                     if request_count >= max_req:
                         break
 
-                    if method == "GET":
+                    if using_path_fallback:
+                        original_value = str((req.params or {}).get(param, ""))
+                        test_path = _inject_payload_into_path(req.path, original_value, str(payload))
+                        test_url = urljoin(f"{base_url}/", test_path.lstrip("/"))
+                        if method == "GET":
+                            resp = requests.get(
+                                test_url,
+                                params=query or None,
+                                headers=headers,
+                                timeout=timeout_s,
+                                allow_redirects=False,
+                            )
+                        else:
+                            resp = requests.request(
+                                method,
+                                test_url,
+                                headers=headers,
+                                json=body or None,
+                                timeout=timeout_s,
+                                allow_redirects=False,
+                            )
+                        request_info = {
+                            "method": method,
+                            "path": test_path,
+                            "headers": mask_sensitive(headers),
+                        }
+                    elif method == "GET":
                         test_q = dict(query)
                         test_q[param] = payload
                         resp = requests.get(
