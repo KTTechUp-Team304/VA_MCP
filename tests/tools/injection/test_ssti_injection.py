@@ -13,6 +13,7 @@ def make_tool_input(
     query: dict | None = None,
     body: dict | None = None,
     headers: dict | None = None,
+    params: dict | None = None,
     safe_mode: bool = False,      # ← 기본을 False 로 변경
     timeout: int = 5000,
     max_requests: int = 5,
@@ -25,6 +26,7 @@ def make_tool_input(
             path=path,
             headers=headers or {},
             query=query or {},
+            params=params or {},
             body=body,
         ),
         options=ToolOptions(
@@ -76,3 +78,25 @@ def test_vulnerable_post():
         )
     assert result.status == ToolStatus.VULNERABLE.value
     assert result.severity == Severity.CRITICAL.value
+
+
+def test_vulnerable_path_param_fallback():
+    """query/body 없는 path-param 전용 엔드포인트에서 SSTI payload와 카나리 검증 모두
+    경로 세그먼트로 percent-encode되어 전달되는지 확인한다 (T-23)."""
+    with patch("va_mcp.tools.injection.ssti_injection.requests.get",
+               side_effect=[make_resp("49"), make_resp("safe output")]) as mock_get:
+        result = SstiInjectionTool().run(
+            make_tool_input(
+                path="/api/courses/2",
+                params={"courseId": "2"},
+                max_requests=2,
+                payload_list=[{"payload": "{{7*7}}", "expected": "49"}],
+            )
+        )
+    assert result.status == ToolStatus.VULNERABLE.value
+    assert mock_get.call_count == 2
+    payload_call_url = mock_get.call_args_list[0][0][0]
+    canary_call_url = mock_get.call_args_list[1][0][0]
+    assert "/api/courses/2" not in payload_call_url
+    assert "%7B%7B" in payload_call_url
+    assert "SSTI_CANARY_98765" in canary_call_url
