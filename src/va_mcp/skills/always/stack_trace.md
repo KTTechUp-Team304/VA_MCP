@@ -47,10 +47,13 @@ severity 매핑
 | 500 응답, 시그니처 없음                     | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 사용한 페이로드
-- 탐지된 시그니처 문자열
-- 응답 body 발췌 (최대 500자)
-- status_code + elapsed_seconds
+  [요청] {METHOD} {URL}
+  [페이로드] {삽입한 비정상 값}
+  [응답] {status_code} / elapsed: {elapsed_seconds}s
+  [시그니처] {탐지된 시그니처 문자열}
+  [body 발췌] {스택 트레이스 / 내부 경로 200자 이내}
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

@@ -38,10 +38,15 @@ severity 매핑
 | 모든 PROBE PASSED                         | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 요청 URL + 사용한 Origin 값
-- 응답 Access-Control-Allow-Origin 헤더 값
-- 응답 Access-Control-Allow-Credentials 헤더 값 (존재 시)
-- 인증 없는 요청과 토큰 첨부 요청의 응답 차이 (PROBE-2 실행 시)
+  [요청] {METHOD} {URL}
+  [헤더] Origin: {사용한 Origin 값}
+  [헤더] Authorization: Bearer {토큰} (PROBE-2 시)
+  [응답] {status_code}
+  [ACAO] Access-Control-Allow-Origin: {값}
+  [ACAC] Access-Control-Allow-Credentials: {값} (존재 시)
+  [비교] 인증 없음({ACAO값}) → 토큰 첨부({ACAO값}) (PROBE-2 실행 시)
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

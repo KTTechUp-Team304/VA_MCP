@@ -40,9 +40,13 @@ severity 매핑
 | 세 응답 동일                                | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- PROBE-1 / PROBE-2 / PROBE-3 응답 메시지 비교
-- elapsed_seconds 비교
-- status_code 비교
+  [요청] {METHOD} {URL}
+  [PROBE-1] 유효ID+유효PW → status={status_code} / elapsed={elapsed_seconds}s / body: {발췌}
+  [PROBE-2] 무효ID+유효PW → status={status_code} / elapsed={elapsed_seconds}s / body: {발췌}
+  [PROBE-3] 유효ID+무효PW → status={status_code} / elapsed={elapsed_seconds}s / body: {발췌}
+  [비교] PROBE-2 vs PROBE-3 body 차이: {차이점} / elapsed 차이: {차이}s
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

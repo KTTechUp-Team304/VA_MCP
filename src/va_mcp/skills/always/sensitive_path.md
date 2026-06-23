@@ -37,9 +37,11 @@ severity 매핑
 | 모든 경로 403/404                           | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 200 응답을 반환한 경로
-- 응답 body 발췌 (민감 정보 포함 시)
-- status_code + elapsed_seconds
+  [요청] GET {URL} (경로: {탐지된 경로})
+  [응답] {status_code} / elapsed: {elapsed_seconds}s
+  [body 발췌] {노출된 민감 정보 200자 이내}
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

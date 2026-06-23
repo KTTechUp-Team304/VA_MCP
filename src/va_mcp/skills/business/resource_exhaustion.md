@@ -15,10 +15,12 @@ PROBE-1: 100KB 더미 페이로드 전송
 판단 기준
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- elapsed_seconds >= 10.0 → VULNERABLE
-- status_code == 500 → VULNERABLE (처리 실패)
+baseline = auth_state.baseline_responses에서 정상 요청의 elapsed_seconds.
+
+- 대용량 페이로드 응답의 elapsed_seconds가 baseline 대비 3배 이상 증가 → VULNERABLE
+- status_code == 500 (baseline은 2xx) → VULNERABLE (처리 실패)
 - status_code == 413 Payload Too Large → PASSED (크기 제한 정상)
-- elapsed_seconds < 10.0 + 정상 응답 → PASSED
+- baseline 대비 elapsed_seconds 유의미한 차이 없음 → PASSED
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 severity 매핑
@@ -26,14 +28,17 @@ severity 매핑
 
 | 조건                                        | severity | confidence |
 |---------------------------------------------|----------|------------|
-| elapsed_seconds >= 10.0                     | HIGH     | MEDIUM     |
-| 500 반환                                    | MEDIUM   | MEDIUM     |
+| baseline 대비 elapsed 3배 이상 증가         | HIGH     | MEDIUM     |
+| baseline 대비 status_code 500 변화          | MEDIUM   | MEDIUM     |
 | 413 반환                                    | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 페이로드 크기
-- elapsed_seconds
-- status_code
+  [요청] {METHOD} {URL}
+  [페이로드] {필드명}에 {크기} 더미 데이터 삽입
+  [응답] {status_code} / elapsed: {elapsed_seconds}s
+  [비교] baseline(정상: {baseline_elapsed}s) → 공격(대용량: {attack_elapsed}s) — {배수}배 증가
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

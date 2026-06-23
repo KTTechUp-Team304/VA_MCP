@@ -15,9 +15,11 @@ PROBE-1: 잘못된 자격증명으로 20회 연속 요청
 판단 기준
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 20회 전 구간에서 status_code / 메시지 변화 없음 → VULNERABLE
-- 특정 횟수 이후 429 / 423 / 403으로 변화 → PASSED
-- 응답 메시지가 "too many attempts" 등으로 변화 → PASSED
+1회차 응답을 baseline으로 저장하고, 이후 응답과 비교합니다.
+
+- 20회 전 구간에서 baseline과 동일한 status_code·body 유지 → VULNERABLE (잠금 없음)
+- 특정 횟수 이후 baseline 대비 status_code 변화 또는 body에 차단 메시지 출현 → PASSED
+- baseline 대비 elapsed_seconds가 점진적으로 증가 → PASSED (지연 기반 차단)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 severity 매핑
@@ -25,12 +27,19 @@ severity 매핑
 
 | 조건                                        | severity | confidence |
 |---------------------------------------------|----------|------------|
-| 20회 연속 잠금 없음                         | HIGH     | HIGH       |
-| 429 / 423 / 403으로 변화                    | PASSED   | HIGH       |
+| 20회 연속 baseline과 동일 (잠금 없음)       | HIGH     | HIGH       |
+| N회차 이후 baseline 대비 응답 변화 (잠금됨) | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 5회 / 10회 / 20회 시점의 status_code + 응답 메시지
-- 잠금 발생 시 임계 횟수
+  [요청] {METHOD} {URL}
+  [1회차] status={status_code} / body 발췌: {발췌}
+  [5회차] status={status_code} / body 발췌: {발췌}
+  [10회차] status={status_code} / body 발췌: {발췌}
+  [20회차] status={status_code} / body 발췌: {발췌}
+  [비교] baseline({1회차_status}) → 최종({20회차_status})
+  [잠금 시점] {N}회차에서 응답 변화 발생 (발생 시)
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

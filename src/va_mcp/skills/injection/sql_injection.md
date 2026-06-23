@@ -48,10 +48,14 @@ severity 매핑
 | 모든 PROBE PASSED                 | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 사용한 페이로드 + 삽입한 파라미터명
-- 탐지된 SQL 에러 시그니처 또는 응답 길이 차이
-- elapsed_seconds (시간 기반 시)
-- 참/거짓 응답 비교 요약 (Boolean Blind 시)
+  [요청] {METHOD} {URL}
+  [페이로드] {파라미터명}={삽입한 페이로드}
+  [응답] {status_code} / elapsed: {elapsed_seconds}s
+  [시그니처] {탐지된 SQL 에러 문자열} (에러 기반 시)
+  [Boolean] 참({status_code}, body 길이 {N}) → 거짓({status_code}, body 길이 {N}) (Blind 시)
+  [body 발췌] {판단 근거가 되는 응답 부분 200자 이내}
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

@@ -51,10 +51,12 @@ severity 매핑
 | 모든 PROBE PASSED                     | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 사용한 페이로드 + 삽입한 파라미터명
-- elapsed_seconds (시간 기반 시)
-- 응답 body 발췌 (출력 기반 시)
-- status_code
+  [요청] {METHOD} {URL}
+  [페이로드] {파라미터명}={삽입한 페이로드}
+  [응답] {status_code} / elapsed: {elapsed_seconds}s
+  [body 발췌] {명령 실행 출력 200자 이내} (출력 기반 시)
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

@@ -41,8 +41,13 @@ severity 매핑
 | 모두 존재, CSP 안전               | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 누락된 헤더 목록
-- CSP 값 전문 (존재 시)
+  [요청] {METHOD} {URL}
+  [응답] {status_code}
+  [누락 헤더] {누락된 헤더 목록}
+  [CSP 값] {CSP 헤더 전문} (존재 시)
+  [CSP 문제] unsafe-inline / unsafe-eval / wildcard 포함 여부
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.
