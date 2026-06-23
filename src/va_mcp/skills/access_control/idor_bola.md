@@ -23,9 +23,11 @@ PROBE-3: body 외래키 변조 (user_id, owner_id, sender_id 등 존재 시)
 판단 기준
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- status_code == 200 + 다른 사용자 데이터 반환 → VULNERABLE
-- status_code == 200 + body가 동일(자신의 데이터) → PASSED
-- status_code == 403 / 401 → PASSED
+baseline = auth_state.baseline_responses에서 자기 리소스 접근 시 응답.
+
+- 교차 접근 응답이 baseline과 동일한 status_code + body에 다른 사용자 식별 데이터(user_id, owner_id 등) 포함 → VULNERABLE
+- baseline과 동일한 status_code이지만 body가 자기 데이터만 반환 → PASSED (서버가 토큰 기준 필터링)
+- baseline 대비 status_code가 403/401로 변화 → PASSED
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 severity 매핑
@@ -33,15 +35,18 @@ severity 매핑
 
 | 조건                                        | severity | confidence |
 |---------------------------------------------|----------|------------|
-| 다른 사용자 민감 데이터 접근 성공           | CRITICAL | HIGH       |
-| 다른 사용자 일반 데이터 접근 성공           | HIGH     | HIGH       |
-| 403 / 401 반환                              | PASSED   | HIGH       |
+| baseline 대비 다른 사용자 민감 데이터 반환  | CRITICAL | HIGH       |
+| baseline 대비 다른 사용자 일반 데이터 반환  | HIGH     | HIGH       |
+| baseline 대비 4xx 변화                      | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 사용한 토큰 role명
-- 접근 시도한 리소스 ID
-- 응답 body 발췌 (소유자 불일치 확인)
-- status_code
+  [요청] {METHOD} {URL} (리소스 ID: {target_id})
+  [헤더] Authorization: Bearer {토큰} (role: {role명})
+  [응답] {status_code} / elapsed: {elapsed_seconds}s
+  [body 발췌] {응답 본문 중 소유자 식별 필드 200자 이내}
+  [비교] baseline(자기 리소스: {baseline_status}, owner={자기ID}) → 공격(타인 리소스: {attack_status}, owner={타인ID})
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

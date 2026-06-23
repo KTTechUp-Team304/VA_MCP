@@ -37,9 +37,12 @@ severity 매핑
 | 최저 권한 403 / 401 반환                          | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 최고 권한 응답 status_code + body 요약
-- 최저 권한 응답 status_code + body 요약
-- 두 응답의 차이점 명시
+  [요청] {METHOD} {URL}
+  [최고 권한] role: {role명} / status={status_code} / body 발췌: {발췌}
+  [최저 권한] role: {role명} / status={status_code} / body 발췌: {발췌}
+  [비교] 최고 권한({status}) → 최저 권한({status}) / body 차이: {차이점}
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

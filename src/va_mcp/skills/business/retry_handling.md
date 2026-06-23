@@ -29,8 +29,12 @@ severity 매핑
 | 409 / 422 / 400 반환                        | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 1회차 / 2회차 status_code 비교
-- 응답 body 발췌 (리소스 중복 생성 여부)
+  [요청] {METHOD} {URL}
+  [1회차] status={status_code} / body 발췌: {발췌}
+  [2회차] status={status_code} / body 발췌: {발췌}
+  [비교] 1회차({status}) → 2회차({status}) / 중복 생성 여부: {예/아니오}
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

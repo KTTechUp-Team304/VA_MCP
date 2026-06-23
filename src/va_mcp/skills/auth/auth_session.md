@@ -39,9 +39,13 @@ severity 매핑
 | 로그아웃 후 401 / 403 반환                 | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 로그아웃 전 status_code
-- 로그아웃 후 동일 토큰 재사용 status_code
-- 응답 body 발췌
+  [PROBE-1] 로그아웃 전: {METHOD} {URL} → status={status_code}
+  [PROBE-2] 로그아웃: {METHOD} {logout_path} → status={status_code}
+  [PROBE-3] 로그아웃 후 재접근: {METHOD} {URL} → status={status_code}
+  [body 발췌] {PROBE-3 응답 200자 이내}
+  [비교] 로그아웃 전({status}) → 로그아웃 후({status})
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

@@ -44,9 +44,13 @@ severity 매핑
 | 모든 PROBE 401 / 403                        | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 시도한 변조 방법
-- 변조된 토큰 헤더 (alg 값)
-- status_code + 응답 body 발췌
+  [요청] {METHOD} {URL}
+  [변조] {변조 방법} (alg: {원본} → {변조값})
+  [헤더] Authorization: Bearer {변조된 토큰 앞 20자}...
+  [응답] {status_code} / elapsed: {elapsed_seconds}s
+  [body 발췌] {응답 200자 이내}
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

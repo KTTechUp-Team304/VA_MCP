@@ -38,10 +38,14 @@ severity 매핑
 | 모든 PROBE PASSED                           | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 요청 URL + 사용한 페이로드
-- X-Powered-By 헤더 값 (존재 시)
-- Server 헤더 값 (존재 시)
-- 노출된 body 내용 발췌 (존재 시)
+  [요청] {METHOD} {URL}
+  [페이로드] {삽입한 비정상 값} (PROBE-2 시)
+  [응답] {status_code}
+  [헤더] X-Powered-By: {값} (존재 시)
+  [헤더] Server: {값} (존재 시)
+  [body 발췌] {노출된 스택 트레이스/경로/버전 200자 이내} (존재 시)
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

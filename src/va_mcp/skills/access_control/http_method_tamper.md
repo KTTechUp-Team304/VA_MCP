@@ -18,9 +18,12 @@ PROBE-2: X-HTTP-Method-Override 헤더 삽입
 판단 기준
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 허용되지 않아야 할 메서드에서 200 / 201 / 204 반환 → VULNERABLE
-- X-HTTP-Method-Override로 상태 변경 동작 시 → VULNERABLE
+baseline = auth_state.baseline_responses에서 정상 메서드의 응답.
+
+- 비허용 메서드 응답이 baseline(정상 메서드)과 동일한 body 패턴 (실제 데이터 포함) → VULNERABLE
+- X-HTTP-Method-Override로 baseline 대비 상태 변경 확인 → VULNERABLE
 - 405 Method Not Allowed 반환 → PASSED
+- 200이지만 body가 빈 값 또는 메서드 목록만 반환 (OPTIONS 등) → PASSED
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 severity 매핑
@@ -28,13 +31,18 @@ severity 매핑
 
 | 조건                                        | severity | confidence |
 |---------------------------------------------|----------|------------|
-| DELETE/PUT 동작 우회 성공                   | HIGH     | HIGH       |
-| 비허용 메서드 200 반환                      | MEDIUM   | HIGH       |
+| Override로 baseline 대비 상태 변경 성공     | HIGH     | HIGH       |
+| 비허용 메서드로 baseline과 동일 데이터 반환 | MEDIUM   | HIGH       |
 | 405 반환                                    | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- 시도한 메서드 또는 Override 헤더값
-- status_code + 응답 body 발췌
+  [요청] {METHOD} {URL}
+  [헤더] X-HTTP-Method-Override: {값} (사용 시)
+  [응답] {status_code} / elapsed: {elapsed_seconds}s
+  [body 발췌] {응답 본문 중 판단 근거 200자 이내}
+  [비교] baseline(정상 메서드: {baseline_status}) → 공격({tamper_method}: {attack_status})
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.

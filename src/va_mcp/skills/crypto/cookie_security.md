@@ -36,8 +36,12 @@ severity 매핑
 | 모든 플래그 정상                            | PASSED   | HIGH       |
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-evidence 필수 포함 항목
+evidence 작성 형식 (이 형식을 반드시 따르세요)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Set-Cookie 헤더 전문
-- 누락된 플래그 목록
+  [요청] {METHOD} {URL}
+  [응답] {status_code}
+  [Set-Cookie] {Set-Cookie 헤더 전문}
+  [누락 플래그] {누락된 플래그 목록}
+
+  ※ 추론 금지. 실제 execute_probe 결과만 기재.
