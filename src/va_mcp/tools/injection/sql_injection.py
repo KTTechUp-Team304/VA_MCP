@@ -15,10 +15,11 @@ extra 옵션:
 
 from __future__ import annotations
 
+import json
 import requests
 import time
 from typing import Any, Dict, List
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
 from va_mcp.core.base import BaseTool
 from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
@@ -84,10 +85,21 @@ SQL_ERROR_SIGNATURES = [
 ]
 
 
+def _inject_payload_into_path(path: str, original_value: str, new_value: str) -> str:
+    """path의 세그먼트 중 원본 path param 값과 정확히 일치하는 세그먼트만 new_value로 치환한다.
+    new_value를 percent-encode하여 항상 단일 세그먼트로 고정한다 — 인코딩하지 않으면 payload 안의
+    '/'가 경로 구분자로 해석되어 의도한 세그먼트 경계를 벗어난다(기본 payload에는 없지만
+    extra.payload_list로 임의 문자열이 들어올 수 있음).
+    """
+    encoded = quote(new_value, safe="")
+    segments = path.split("/")
+    return "/".join(encoded if seg == original_value else seg for seg in segments)
+
+
 class SqlInjectionTool(BaseTool):
     tool_id = "sql_injection"
     tool_name = "SQL Injection Testing"
-    tool_version = "0.1.0"
+    tool_version = "0.2.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         start_ts   = time.time()
@@ -135,6 +147,11 @@ class SqlInjectionTool(BaseTool):
         path_params = list((req.params or {}).keys())
         test_params = list(query.keys()) if method == "GET" else list(body.keys())
         test_params = test_params or path_params
+        # query/body에 실제 파라미터가 없어 path_params로 폴백한 경우 — 페이로드를 쿼리스트링이
+        # 아니라 실제 URL 경로 세그먼트에 주입해야 한다(T-23). 그렇지 않으면 Orchestrator(O-4)가
+        # 이미 치환해놓은 경로(예: /api/users/36)는 그대로 남고, 무의미한 쿼리스트링만 추가된다.
+        has_real_params = bool(query) if method == "GET" else bool(body)
+        using_path_fallback = not has_real_params and bool(path_params)
         if not test_params:
             ended_at   = utc_now_iso()
             duration_ms = int((time.time() - start_ts) * 1000)
@@ -215,7 +232,33 @@ class SqlInjectionTool(BaseTool):
                     if request_count >= max_req:
                         break
 
-                    if method == "GET":
+                    if using_path_fallback:
+                        original_value = str((req.params or {}).get(param, ""))
+                        test_path = _inject_payload_into_path(req.path, original_value, str(payload))
+                        test_url = urljoin(f"{base_url}/", test_path.lstrip("/"))
+                        if method == "GET":
+                            resp = requests.get(
+                                test_url,
+                                params=query or None,
+                                headers=headers,
+                                timeout=timeout_s,
+                                allow_redirects=False,
+                            )
+                        else:
+                            resp = requests.request(
+                                method,
+                                test_url,
+                                headers=headers,
+                                json=body or None,
+                                timeout=timeout_s,
+                                allow_redirects=False,
+                            )
+                        req_info = {
+                            "method": method,
+                            "path": test_path,
+                            "headers": mask_sensitive(headers),
+                        }
+                    elif method == "GET":
                         test_q = dict(query)
                         test_q[param] = payload
                         resp = requests.get(
@@ -266,8 +309,11 @@ class SqlInjectionTool(BaseTool):
                         and 200 <= resp.status_code < 300
                     )
 
-                    # C) JSON 성공 지표 감지 + baseline 응답과 다름
+                    # C) JSON 성공 지표 감지 + baseline 응답과 다름 (dict 응답 — 로그인 등 토큰형 성공)
                     json_success = False
+                    # D) baseline 대비 응답 행 개수 변화 (list 응답 — 목록 조회 등 데이터 노출형 bypass)
+                    list_count_changed = False
+                    list_count_before = list_count_after = None
                     if 200 <= resp.status_code < 300:
                         try:
                             resp_json = resp.json()
@@ -275,10 +321,24 @@ class SqlInjectionTool(BaseTool):
                                 json_success = bool(
                                     _SUCCESS_KEYS & set(resp_json.keys())
                                 ) and resp.text.strip() != baseline_text
+                            elif isinstance(resp_json, list):
+                                baseline_json = json.loads(baseline_text)
+                                if isinstance(baseline_json, list):
+                                    list_count_before = len(baseline_json)
+                                    list_count_after = len(resp_json)
+                                    list_count_changed = list_count_before != list_count_after
                         except Exception:
                             pass
 
-                    if detected or status_changed or json_success:
+                    # E) baseline 정상 응답(5xx 미만) 대비 500 에러로 전환 (DB 에러 시그니처가 없는
+                    # 일반 예외도 SQL 구문 오류로 인한 미처리 예외일 수 있음 — T-23 부가 발견 신호)
+                    generic_error_changed = (
+                        baseline_status != -1
+                        and baseline_status < 500
+                        and resp.status_code >= 500
+                    )
+
+                    if detected or status_changed or json_success or list_count_changed or generic_error_changed:
                         reasons = []
                         if detected:
                             reasons.append(f"SQL 에러 시그니처: {detected[:3]}")
@@ -286,6 +346,15 @@ class SqlInjectionTool(BaseTool):
                             reasons.append(f"상태코드 변화: {baseline_status} → {resp.status_code} (bypass 성공)")
                         if json_success:
                             reasons.append("JSON 성공 응답 수신 (토큰/인증 키 포함, baseline과 상이)")
+                        if list_count_changed:
+                            reasons.append(
+                                f"응답 행 개수 변화: baseline {list_count_before}건 → {list_count_after}건 (데이터 노출형 bypass 가능성)"
+                            )
+                        if generic_error_changed:
+                            reasons.append(
+                                f"baseline 정상 응답({baseline_status}) → 페이로드 주입 시 {resp.status_code} 에러 "
+                                "발생 (시그니처 없는 서버 예외 — SQL 구문 오류 가능성)"
+                            )
 
                         evidences.append(
                             Evidence(

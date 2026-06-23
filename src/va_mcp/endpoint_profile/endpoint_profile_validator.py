@@ -190,15 +190,23 @@ def validate_endpoint_profile(profile: EndpointProfile) -> None:
             )
         else:
             rc = profile.resource_context
-            for key in ("resource_type", "resource_id_key"):
-                if key not in rc or not _is_non_empty_str(rc.get(key)):
-                    issues.append(
-                        ValidationIssue(
-                            "RESOURCE_CONTEXT",
-                            "resource_context",
-                            f"resource_context에 비어 있지 않은 {key}가 필요합니다",
+            # A03 모드(dependencies만 있고 resource_type/resource_id_key가 없음)는
+            # IDOR 전용 필수 필드 검증을 건너뛴다 (normalize_resource_context와 동일한 판별 조건)
+            is_a03_mode = (
+                "dependencies" in rc
+                and "resource_type" not in rc
+                and "resource_id_key" not in rc
+            )
+            if not is_a03_mode:
+                for key in ("resource_type", "resource_id_key"):
+                    if key not in rc or not _is_non_empty_str(rc.get(key)):
+                        issues.append(
+                            ValidationIssue(
+                                "RESOURCE_CONTEXT",
+                                "resource_context",
+                                f"resource_context에 비어 있지 않은 {key}가 필요합니다",
+                            )
                         )
-                    )
             if "hierarchy_keys" in rc and not isinstance(rc["hierarchy_keys"], list):
                 issues.append(
                     ValidationIssue(

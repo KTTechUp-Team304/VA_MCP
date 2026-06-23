@@ -15,6 +15,7 @@ def make_tool_input(
     query: dict | None = None,
     body: dict | None = None,
     headers: dict | None = None,
+    params: dict | None = None,
     **extra_opts,
 ) -> ToolInput:
     return ToolInput(
@@ -24,6 +25,7 @@ def make_tool_input(
             path=path,
             headers=headers or {},
             query=query or {},
+            params=params or {},
             body=body,
         ),
         options=ToolOptions(extra=extra_opts),
@@ -83,6 +85,29 @@ def test_vulnerable_windows():
 
     assert result.status == ToolStatus.VULNERABLE.value
     assert len(result.evidence) > 0
+
+
+def test_vulnerable_path_param_fallback():
+    """query/body 없는 path-param 전용 엔드포인트에서 path traversal payload가 경로 세그먼트로
+    percent-encode되어 전달되는지 확인한다 (T-23) — urljoin의 dot-segment 정규화로 소거되면 안 된다."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "root:x:0:0:root:/root:/bin/bash"
+
+    with patch("requests.get", return_value=mock_resp) as mock_get:
+        result = PathTraversalTool().run(
+            make_tool_input(
+                path="/api/files/9/download",
+                params={"fileId": "9"},
+                payload_list=["../../../etc/passwd"],
+            )
+        )
+
+    assert result.status == ToolStatus.VULNERABLE.value
+    called_url = mock_get.call_args[0][0]
+    assert "/api/files/9/download" not in called_url
+    assert "%2F" in called_url
+    assert called_url.endswith("/download")
 
 
 def test_error():

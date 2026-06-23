@@ -46,7 +46,7 @@ class ScenarioPlanner:
     도구별 선정 기준 (planner_tool_selection.md 기준):
 
       A01 Broken Access Control:
-        idor_bola        : has_resource_identifier AND auth_contexts >= 2  (requires_auth 무관 — P-8 fix)
+        idor_bola        : has_resource_identifier AND auth_contexts >= 2  (requires_auth 무관)
         bfla             : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
         rbac_check       : (has_admin_feature OR has_role_restriction) AND auth_contexts >= 2
         forced_browsing  : requires_auth (항상)
@@ -55,7 +55,7 @@ class ScenarioPlanner:
         cors_check       : requires_auth (항상)
 
       A02 Security Misconfiguration: baseline 항상
-      A03 Software Supply Chain:     has_dependency_exposure (미구현)
+      A03 Software Supply Chain:     has_dependency_exposure → dependency_check
 
       A04 Cryptographic Failures:
         insecure_jwt           : has_secret_handling AND (is_login_endpoint OR requires_auth)
@@ -63,12 +63,12 @@ class ScenarioPlanner:
         sensitive_data_exposure: has_secret_handling OR returns_sensitive_data OR has_debug_feature
 
       A05 Injection:
-        sql_injection  : has_user_input AND (has_free_text_input OR has_enum_input)
-        cmd_injection  : has_user_input AND has_free_text_input AND (has_debug_feature OR has_file_or_config_surface)
-        xss_reflected  : has_user_input AND has_free_text_input
-        ssti_injection : has_user_input AND has_free_text_input
+        sql_injection  : has_user_input AND (has_free_text_input OR has_enum_input OR has_credential_fields OR has_resource_identifier)
+        cmd_injection  : has_user_input AND ((has_free_text_input AND (has_debug_feature OR has_file_or_config_surface)) OR has_resource_identifier)
+        xss_reflected  : has_user_input AND (has_free_text_input OR has_resource_identifier)
+        ssti_injection : has_user_input AND (has_free_text_input OR has_resource_identifier)
         header_injection: has_user_input
-        path_traversal : has_user_input AND (has_file_or_config_surface OR has_free_text_input)
+        path_traversal : has_user_input AND (has_file_or_config_surface OR has_free_text_input OR has_resource_identifier)
 
       A06 Insecure Design:
         rate_limit_check   : is_state_changing
@@ -141,7 +141,7 @@ class ScenarioPlanner:
         if (has_admin or has_role_res) and auth_count >= 2:
             a01_tools.append("rbac_check")
 
-        # idor_bola: requires_auth 무관 — 공개 API도 IDOR 대상 (P-8 fix)
+        # idor_bola: requires_auth 무관 — 공개 API도 IDOR 대상
         if (has_resource or resource_ctx) and auth_count >= 2:
             a01_tools.append("idor_bola")
         elif (has_resource or resource_ctx) and requires_auth:
@@ -167,7 +167,7 @@ class ScenarioPlanner:
         # ── A03: Software Supply Chain Failures ───────────────────────
         if _get(feature_set, "has_dependency_exposure"):
             candidates.append("A03")
-            # 미구현
+            tool_ids.append("dependency_check")
 
         # ── A04: Cryptographic Failures ───────────────────────────────
         has_secret      = _get(feature_set, "has_secret_handling")
@@ -201,15 +201,15 @@ class ScenarioPlanner:
 
         if has_user_input:
             # sql_injection
-            if has_free_text or has_enum or has_cred:
+            if has_free_text or has_enum or has_cred or has_resource:
                 a05_tools.append("sql_injection")
 
             # cmd_injection
-            if has_free_text and (has_debug or has_file_cfg):
+            if (has_free_text and (has_debug or has_file_cfg)) or has_resource:
                 a05_tools.append("cmd_injection")
 
             # xss_reflected, ssti_injection
-            if has_free_text:
+            if has_free_text or has_resource:
                 a05_tools.append("xss_reflected")
                 a05_tools.append("ssti_injection")
 
@@ -217,7 +217,7 @@ class ScenarioPlanner:
             a05_tools.append("header_injection")
 
             # path_traversal
-            if has_file_cfg or has_free_text:
+            if has_file_cfg or has_free_text or has_resource:
                 a05_tools.append("path_traversal")
 
         if a05_tools:

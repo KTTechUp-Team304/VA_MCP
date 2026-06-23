@@ -20,7 +20,7 @@ from __future__ import annotations
 import requests
 import time
 from typing import Any, Dict, List
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
 from va_mcp.core.base import BaseTool
 from va_mcp.core.schemas import ToolInput, ToolResult, Evidence
@@ -53,6 +53,17 @@ DEFAULT_PAYLOADS = [
 MIN_REQUESTS_FOR_CANARY = 2
 
 
+def _inject_payload_into_path(path: str, original_value: str, new_value: str) -> str:
+    """path의 세그먼트 중 원본 path param 값과 정확히 일치하는 세그먼트만 new_value로 치환한다.
+    new_value를 percent-encode하여 항상 단일 세그먼트로 고정한다 — 인코딩하지 않으면 payload 안의
+    '/'가 경로 구분자로 해석되어 의도한 세그먼트 경계를 벗어난다(기본 payload에는 없지만
+    extra.payload_list로 임의 문자열이 들어올 수 있음).
+    """
+    encoded = quote(new_value, safe="")
+    segments = path.split("/")
+    return "/".join(encoded if seg == original_value else seg for seg in segments)
+
+
 def _validate_payload_entry(entry: object) -> bool:
     """페이로드 항목이 올바른 형식인지 검증"""
     if not isinstance(entry, dict):
@@ -72,7 +83,7 @@ class SstiInjectionTool(BaseTool):
     """
     tool_id = "ssti_injection"
     tool_name = "SSTI (Server-Side Template Injection) Testing"
-    tool_version = "0.1.0"
+    tool_version = "0.2.0"
 
     def run(self, tool_input: ToolInput) -> ToolResult:
         start_ts   = time.time()
@@ -155,6 +166,10 @@ class SstiInjectionTool(BaseTool):
         else:
             test_params = list(body.keys())
         test_params = test_params or path_params
+        # query/body에 실제 파라미터가 없어 path_params로 폴백한 경우 — 페이로드를 쿼리스트링이
+        # 아니라 실제 URL 경로 세그먼트에 주입해야 한다(T-23). 카나리 검증도 동일하게 적용한다.
+        has_real_params = bool(query) if method == "GET" else bool(body)
+        using_path_fallback = not has_real_params and bool(path_params)
 
         if not test_params:
             ended_at   = utc_now_iso()
@@ -219,7 +234,33 @@ class SstiInjectionTool(BaseTool):
                     pl = entry["payload"]
                     exp = entry["expected"]
 
-                    if method == "GET":
+                    if using_path_fallback:
+                        original_value = str((req.params or {}).get(param, ""))
+                        test_path = _inject_payload_into_path(path, original_value, pl)
+                        test_url = urljoin(f"{base_url}/", test_path.lstrip("/"))
+                        if method == "GET":
+                            resp = requests.get(
+                                test_url,
+                                params=query or None,
+                                headers=headers,
+                                timeout=timeout_s,
+                                allow_redirects=False,
+                            )
+                        else:
+                            resp = requests.request(
+                                method,
+                                test_url,
+                                headers=headers,
+                                json=body or None,
+                                timeout=timeout_s,
+                                allow_redirects=False,
+                            )
+                        req_info = {
+                            "method": method,
+                            "path": test_path,
+                            "headers": mask_sensitive(headers),
+                        }
+                    elif method == "GET":
                         test_q = dict(query)
                         test_q[param] = pl
                         resp = requests.get(
@@ -262,7 +303,30 @@ class SstiInjectionTool(BaseTool):
                         canary_skipped = False
                         if canary_enabled and request_count < max_req:
                             try:
-                                if method == "GET":
+                                if using_path_fallback:
+                                    original_value = str((req.params or {}).get(param, ""))
+                                    canary_path = _inject_payload_into_path(
+                                        path, original_value, "SSTI_CANARY_98765"
+                                    )
+                                    canary_url = urljoin(f"{base_url}/", canary_path.lstrip("/"))
+                                    if method == "GET":
+                                        c_resp = requests.get(
+                                            canary_url,
+                                            params=query or None,
+                                            headers=headers,
+                                            timeout=timeout_s,
+                                            allow_redirects=False,
+                                        )
+                                    else:
+                                        c_resp = requests.request(
+                                            method,
+                                            canary_url,
+                                            headers=headers,
+                                            json=body or None,
+                                            timeout=timeout_s,
+                                            allow_redirects=False,
+                                        )
+                                elif method == "GET":
                                     c_q = dict(query)
                                     c_q[param] = "SSTI_CANARY_98765"
                                     c_resp = requests.get(

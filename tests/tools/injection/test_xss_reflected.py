@@ -15,6 +15,7 @@ def make_tool_input(
     query: dict | None = None,
     body: dict | None = None,
     headers: dict | None = None,
+    params: dict | None = None,
     **extra_opts,
 ) -> ToolInput:
     return ToolInput(
@@ -24,6 +25,7 @@ def make_tool_input(
             path=path,
             headers=headers or {},
             query=query or {},
+            params=params or {},
             body=body,
         ),
         options=ToolOptions(extra=extra_opts),
@@ -85,6 +87,32 @@ def test_vulnerable_img_tag():
 
     assert result.status == ToolStatus.VULNERABLE.value
     assert len(result.evidence) > 0
+
+
+# ── path param fallback (T-23) ─────────────────────────────
+
+def test_vulnerable_path_param_fallback():
+    """query/body 없는 path-param 전용 엔드포인트에서 XSS payload가 경로 세그먼트로
+    percent-encode되어 전달되는지 확인한다 (T-23)."""
+    payload = "<script>alert(1)</script>"
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = f"<html>{payload}</html>"
+
+    with patch("requests.get", return_value=mock_resp) as mock_get:
+        result = XssReflectedTool().run(
+            make_tool_input(
+                path="/api/users/36",
+                params={"userId": "36"},
+                payload_list=[payload],
+            )
+        )
+
+    assert result.status == ToolStatus.VULNERABLE.value
+    called_url = mock_get.call_args[0][0]
+    assert "/api/users/36" not in called_url
+    assert "%3C" in called_url
 
 
 # ── ERROR ──────────────────────────────────────────────────

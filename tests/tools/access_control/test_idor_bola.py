@@ -1,7 +1,7 @@
 """
 IdorBolaTool 테스트.
 
-설계 변경 (T-21): access_type 기반 교차 접근 테스트
+설계 변경: access_type 기반 교차 접근 테스트
   - resource_context.access_type == "private"일 때만 실행
   - auth[0](소유자 역할), auth[-1](공격자 역할)로 교차 접근 테스트
   - JWT sub 비교 방식 제거

@@ -14,6 +14,7 @@ def make_tool_input(
     query: dict | None = None,
     body: dict | None = None,
     headers: dict | None = None,
+    params: dict | None = None,
     safe_mode: bool = False,          # ← 기본을 False 로 변경
     **extra_opts,
 ) -> ToolInput:
@@ -24,6 +25,7 @@ def make_tool_input(
             path=path,
             headers=headers or {},
             query=query or {},
+            params=params or {},
             body=body,
         ),
         options=ToolOptions(
@@ -111,3 +113,22 @@ def test_vulnerable_post(mock_req):
     )
     assert result.status == ToolStatus.VULNERABLE.value
     assert len(result.evidence) > 0
+
+
+# ---------------------------
+# TEST 6: VULNERABLE via path param fallback (T-23, append 방식)
+# ---------------------------
+@patch("requests.get", return_value=mock_resp("uid=0(root)", 200))
+def test_vulnerable_path_param_fallback_append(mock_get):
+    """query/body 없는 path-param 전용 엔드포인트에서 cmd_injection은 원본 값에 payload를
+    append한 뒤 percent-encode하여 경로 세그먼트로 전달한다 (T-23) — 교체가 아니라 append."""
+    result = CmdInjectionTool().run(
+        make_tool_input(path="/api/run/36", params={"id": "36"})
+    )
+    assert result.status == ToolStatus.VULNERABLE.value
+    called_url = mock_get.call_args[0][0]
+    # cmd_injection은 원본 값(36)을 지우지 않고 payload를 이어붙이므로 "/api/run/36"이
+    # 접두사로 남아있는 것은 정상이다 — 핵심은 그 뒤에 payload가 percent-encode되어 붙는 것.
+    assert called_url.startswith("https://test-target.com/api/run/36%3B")
+    called_kwargs = mock_get.call_args[1]
+    assert not called_kwargs.get("params")
